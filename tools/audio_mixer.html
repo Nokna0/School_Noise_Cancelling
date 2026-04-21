@@ -1,0 +1,296 @@
+
+<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">오디오 합성기 - 두 파일을 간섭하여 하나로 출력</h2>
+<div style="padding:1rem 0;">
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+  <div id="card0" style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem;border:0.5px solid var(--color-border-tertiary);">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파일 A</div>
+    <label style="display:block;border:0.5px dashed var(--color-border-secondary);border-radius:var(--border-radius-md);padding:18px 8px;text-align:center;cursor:pointer;font-size:13px;color:var(--color-text-secondary);" id="lbl0">
+      클릭하여 업로드
+      <input type="file" id="file0" accept="audio/*" style="display:none;">
+    </label>
+    <div id="name0" style="font-size:12px;color:var(--color-text-secondary);margin-top:6px;min-height:16px;word-break:break-all;"></div>
+    <canvas id="wave0" style="width:100%;height:48px;display:block;margin-top:8px;"></canvas>
+    <div style="margin-top:10px;">
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">게인 A</div>
+      <input type="range" id="gain0" min="0" max="2" value="1" step="0.01" style="width:100%;">
+      <div style="font-size:12px;text-align:right;color:var(--color-text-secondary);"><span id="gainVal0">1.00</span></div>
+    </div>
+  </div>
+
+  <div id="card1" style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem;border:0.5px solid var(--color-border-tertiary);">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파일 B</div>
+    <label style="display:block;border:0.5px dashed var(--color-border-secondary);border-radius:var(--border-radius-md);padding:18px 8px;text-align:center;cursor:pointer;font-size:13px;color:var(--color-text-secondary);" id="lbl1">
+      클릭하여 업로드
+      <input type="file" id="file1" accept="audio/*" style="display:none;">
+    </label>
+    <div id="name1" style="font-size:12px;color:var(--color-text-secondary);margin-top:6px;min-height:16px;word-break:break-all;"></div>
+    <canvas id="wave1" style="width:100%;height:48px;display:block;margin-top:8px;"></canvas>
+    <div style="margin-top:10px;">
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">게인 B</div>
+      <input type="range" id="gain1" min="0" max="2" value="1" step="0.01" style="width:100%;">
+      <div style="font-size:12px;text-align:right;color:var(--color-text-secondary);"><span id="gainVal1">1.00</span></div>
+    </div>
+  </div>
+</div>
+
+<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem;margin-bottom:1.5rem;border:0.5px solid var(--color-border-tertiary);">
+  <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:10px;">합성 옵션</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+    <div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">길이 처리</div>
+      <select id="lenMode" style="width:100%;font-size:13px;">
+        <option value="longer">긴 쪽에 맞춤</option>
+        <option value="shorter">짧은 쪽에 맞춤</option>
+        <option value="loop">짧은 쪽 루프</option>
+      </select>
+    </div>
+    <div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">출력 정규화</div>
+      <select id="normMode" style="width:100%;font-size:13px;">
+        <option value="peak">피크 정규화</option>
+        <option value="none">정규화 없음</option>
+        <option value="clip">클리핑 (그대로)</option>
+      </select>
+    </div>
+    <div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">출력 샘플레이트</div>
+      <select id="outSr" style="width:100%;font-size:13px;">
+        <option value="auto">원본 유지</option>
+        <option value="44100">44100 Hz</option>
+        <option value="48000">48000 Hz</option>
+        <option value="22050">22050 Hz</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;margin-bottom:1.5rem;">
+  <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">합성 결과 파형</div>
+  <canvas id="waveOut" style="width:100%;height:64px;display:block;"></canvas>
+  <div id="outInfo" style="font-size:12px;color:var(--color-text-secondary);margin-top:6px;min-height:16px;"></div>
+</div>
+
+<div style="display:flex;gap:10px;">
+  <button id="mixBtn" style="flex:1;padding:10px;font-size:14px;font-weight:500;" disabled>합성</button>
+  <button id="playBtn" style="flex:1;padding:10px;font-size:14px;" disabled>재생</button>
+  <button id="stopBtn" style="flex:1;padding:10px;font-size:14px;" disabled>정지</button>
+  <button id="dlBtn" style="flex:1;padding:10px;font-size:14px;font-weight:500;" disabled>WAV 다운로드</button>
+</div>
+<div id="statusMsg" style="margin-top:10px;font-size:12px;color:var(--color-text-secondary);text-align:center;min-height:16px;"></div>
+</div>
+
+<script>
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let buffers = [null, null];
+let mixedSamples = null;
+let mixedSr = 44100;
+let playSource = null;
+let isPlaying = false;
+
+function drawWave(canvas, samples, color) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = canvas.offsetHeight * dpr;
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  if (!samples || samples.length === 0) return;
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  ctx.strokeStyle = isDark ? (color + 'cc') : color;
+  ctx.lineWidth = 1.2;
+  const step = Math.max(1, Math.floor(samples.length / w));
+
+  ctx.beginPath();
+  for (let i = 0; i < w; i++) {
+    let mn = 0, mx = 0;
+    const base = Math.floor(i / w * samples.length);
+    for (let j = 0; j < step; j++) {
+      const s = samples[base + j] || 0;
+      if (s < mn) mn = s;
+      if (s > mx) mx = s;
+    }
+    const y1 = h/2 - mx * (h/2 - 2);
+    const y2 = h/2 - mn * (h/2 - 2);
+    if (i === 0) ctx.moveTo(i, h/2);
+    ctx.moveTo(i, y1);
+    ctx.lineTo(i, y2);
+  }
+  ctx.stroke();
+
+  const axisColor = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
+  ctx.strokeStyle = axisColor; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+}
+
+async function loadFile(idx, file) {
+  document.getElementById(`name${idx}`).textContent = file.name;
+  document.getElementById(`lbl${idx}`).textContent = '불러오는 중...';
+  const arrayBuf = await file.arrayBuffer();
+  const decoded = await audioCtx.decodeAudioData(arrayBuf);
+  buffers[idx] = decoded;
+  document.getElementById(`lbl${idx}`).textContent = `${file.name.slice(0, 22)}${file.name.length > 22 ? '...' : ''}`;
+
+  // mono mix for display
+  const ch0 = decoded.getChannelData(0);
+  const ch1 = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : null;
+  const disp = new Float32Array(ch0.length);
+  for (let i = 0; i < ch0.length; i++) disp[i] = ch1 ? (ch0[i] + ch1[i]) / 2 : ch0[i];
+
+  const colors = ['#378ADD', '#D4537E'];
+  drawWave(document.getElementById(`wave${idx}`), disp, colors[idx]);
+
+  const dur = decoded.duration.toFixed(2);
+  const sr = decoded.sampleRate;
+  document.getElementById(`name${idx}`).textContent = `${file.name} | ${dur}s | ${sr}Hz | ${decoded.numberOfChannels}ch`;
+  checkReady();
+}
+
+function checkReady() {
+  const ready = buffers[0] && buffers[1];
+  document.getElementById('mixBtn').disabled = !ready;
+}
+
+[0, 1].forEach(idx => {
+  document.getElementById(`file${idx}`).addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(idx, e.target.files[0]);
+  });
+  document.getElementById(`gain${idx}`).addEventListener('input', function() {
+    document.getElementById(`gainVal${idx}`).textContent = parseFloat(this.value).toFixed(2);
+  });
+});
+
+function getMonoSamples(buf, targetSr) {
+  if (buf.sampleRate === targetSr) {
+    const ch0 = buf.getChannelData(0);
+    const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+    const out = new Float32Array(ch0.length);
+    for (let i = 0; i < ch0.length; i++) out[i] = ch1 ? (ch0[i]+ch1[i])/2 : ch0[i];
+    return out;
+  }
+  // linear resample
+  const ratio = buf.sampleRate / targetSr;
+  const srcLen = buf.getChannelData(0).length;
+  const outLen = Math.floor(srcLen / ratio);
+  const out = new Float32Array(outLen);
+  const ch0 = buf.getChannelData(0);
+  const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio;
+    const lo = Math.floor(pos), hi = Math.min(lo+1, srcLen-1);
+    const frac = pos - lo;
+    const s0 = ch1 ? (ch0[lo]+ch1[lo])/2 : ch0[lo];
+    const s1 = ch1 ? (ch0[hi]+ch1[hi])/2 : ch0[hi];
+    out[i] = s0 + (s1-s0)*frac;
+  }
+  return out;
+}
+
+document.getElementById('mixBtn').addEventListener('click', () => {
+  const g0 = parseFloat(document.getElementById('gain0').value);
+  const g1 = parseFloat(document.getElementById('gain1').value);
+  const lenMode = document.getElementById('lenMode').value;
+  const normMode = document.getElementById('normMode').value;
+  const outSrSel = document.getElementById('outSr').value;
+
+  mixedSr = outSrSel === 'auto'
+    ? Math.max(buffers[0].sampleRate, buffers[1].sampleRate)
+    : parseInt(outSrSel);
+
+  let s0 = getMonoSamples(buffers[0], mixedSr);
+  let s1 = getMonoSamples(buffers[1], mixedSr);
+
+  let len;
+  if (lenMode === 'longer') len = Math.max(s0.length, s1.length);
+  else if (lenMode === 'shorter') len = Math.min(s0.length, s1.length);
+  else len = Math.max(s0.length, s1.length); // loop
+
+  const mixed = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    let a, b;
+    if (lenMode === 'loop') {
+      a = s0[i % s0.length] * g0;
+      b = s1[i % s1.length] * g1;
+    } else {
+      a = (s0[i] || 0) * g0;
+      b = (s1[i] || 0) * g1;
+    }
+    mixed[i] = a + b;
+  }
+
+  if (normMode === 'peak') {
+    let mx = 0;
+    for (let i = 0; i < len; i++) if (Math.abs(mixed[i]) > mx) mx = Math.abs(mixed[i]);
+    if (mx > 0) for (let i = 0; i < len; i++) mixed[i] /= mx;
+  } else if (normMode === 'clip') {
+    for (let i = 0; i < len; i++) mixed[i] = Math.max(-1, Math.min(1, mixed[i]));
+  }
+
+  mixedSamples = mixed;
+
+  drawWave(document.getElementById('waveOut'), mixed, '#1D9E75');
+
+  const dur = (len / mixedSr).toFixed(2);
+  let peakDb = -Infinity;
+  for (let i = 0; i < len; i++) {
+    const db = 20 * Math.log10(Math.abs(mixed[i]) + 1e-10);
+    if (db > peakDb) peakDb = db;
+  }
+  document.getElementById('outInfo').textContent =
+    `${dur}s | ${mixedSr} Hz | mono | 피크: ${peakDb.toFixed(1)} dBFS | ${len.toLocaleString()} 샘플`;
+
+  document.getElementById('playBtn').disabled = false;
+  document.getElementById('dlBtn').disabled = false;
+  document.getElementById('statusMsg').textContent = '합성 완료';
+});
+
+function stopAudio() {
+  if (playSource) { try { playSource.stop(); } catch(e) {} playSource = null; }
+  isPlaying = false;
+  document.getElementById('playBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('playBtn').textContent = '재생';
+}
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  if (isPlaying || !mixedSamples) return;
+  const abuf = audioCtx.createBuffer(1, mixedSamples.length, mixedSr);
+  abuf.copyToChannel(mixedSamples, 0);
+  playSource = audioCtx.createBufferSource();
+  playSource.buffer = abuf;
+  playSource.connect(audioCtx.destination);
+  playSource.onended = stopAudio;
+  playSource.start();
+  isPlaying = true;
+  document.getElementById('playBtn').disabled = true;
+  document.getElementById('stopBtn').disabled = false;
+  document.getElementById('playBtn').textContent = '재생 중...';
+});
+
+document.getElementById('stopBtn').addEventListener('click', stopAudio);
+
+document.getElementById('dlBtn').addEventListener('click', () => {
+  if (!mixedSamples) return;
+  const n = mixedSamples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const w4 = (o,s) => { for(let i=0;i<4;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  w4(0,'RIFF'); v.setUint32(4,36+n*2,true); w4(8,'WAVE');
+  w4(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,mixedSr,true); v.setUint32(28,mixedSr*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w4(36,'data'); v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){
+    const s=Math.max(-1,Math.min(1,mixedSamples[i]));
+    v.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);
+  }
+  const blob = new Blob([buf],{type:'audio/wav'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download='mixed_output.wav'; a.click();
+  URL.revokeObjectURL(url);
+  document.getElementById('statusMsg').textContent =
+    `저장: mixed_output.wav (${(buf.byteLength/1024).toFixed(1)} KB)`;
+});
+</script>

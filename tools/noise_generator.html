@@ -1,0 +1,273 @@
+
+<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">노이즈 오디오 파일 생성기</h2>
+<div style="padding:1rem 0;">
+
+<div style="display:flex;gap:8px;margin-bottom:1.5rem;" id="typeBar">
+  <button class="ntype active" data-t="white" style="flex:1;padding:8px 4px;font-size:13px;">White</button>
+  <button class="ntype" data-t="pink" style="flex:1;padding:8px 4px;font-size:13px;">Pink</button>
+  <button class="ntype" data-t="brown" style="flex:1;padding:8px 4px;font-size:13px;">Brown</button>
+  <button class="ntype" data-t="blue" style="flex:1;padding:8px 4px;font-size:13px;">Blue</button>
+  <button class="ntype" data-t="violet" style="flex:1;padding:8px 4px;font-size:13px;">Violet</button>
+</div>
+
+<div id="typeDesc" style="font-size:13px;color:var(--color-text-secondary);margin-bottom:1.5rem;min-height:18px;"></div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">진폭</div>
+    <input type="range" id="amp" min="0.01" max="1.0" value="0.5" step="0.01" style="width:100%;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;">
+      <span id="ampVal" style="font-size:15px;font-weight:500;">0.50</span>
+      <span style="font-size:13px;color:var(--color-text-secondary);">최대 1.0</span>
+    </div>
+  </div>
+
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">길이 (초)</div>
+    <input type="range" id="dur" min="0.1" max="30" value="3" step="0.1" style="width:100%;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;">
+      <span id="durVal" style="font-size:15px;font-weight:500;">3.0</span>
+      <span style="font-size:13px;color:var(--color-text-secondary);">s</span>
+    </div>
+  </div>
+
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">샘플레이트</div>
+    <select id="sr" style="width:100%;font-size:14px;font-weight:500;">
+      <option value="44100" selected>44100 Hz (CD)</option>
+      <option value="48000">48000 Hz (DAW)</option>
+      <option value="22050">22050 Hz</option>
+      <option value="16000">16000 Hz</option>
+    </select>
+  </div>
+
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">시드 (재현성)</div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <input type="number" id="seed" value="42" min="0" max="999999" style="flex:1;font-size:14px;">
+      <button id="randSeed" style="padding:6px 10px;font-size:12px;">랜덤</button>
+    </div>
+  </div>
+</div>
+
+<div style="margin-bottom:1.5rem;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+  <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파형 미리보기</div>
+  <canvas id="preview" style="width:100%;height:80px;display:block;"></canvas>
+</div>
+
+<div style="display:flex;gap:10px;">
+  <button id="playBtn" style="flex:1;padding:10px;font-size:14px;">재생</button>
+  <button id="stopBtn" style="flex:1;padding:10px;font-size:14px;" disabled>정지</button>
+  <button id="dlBtn" style="flex:1;padding:10px;font-size:14px;font-weight:500;">WAV 다운로드</button>
+</div>
+
+<div id="info" style="margin-top:12px;font-size:12px;color:var(--color-text-secondary);text-align:center;"></div>
+</div>
+
+<script>
+const descs = {
+  white: '모든 주파수에 균등한 에너지. +0 dB/octave.',
+  pink: '1/f 스펙트럼. 옥타브당 -3 dB. 자연음과 유사.',
+  brown: '1/f² 스펙트럼. 옥타브당 -6 dB. 저음이 강한 브라운/레드 노이즈.',
+  blue: '옥타브당 +3 dB. 고주파 성분이 강조된 노이즈.',
+  violet: '옥타브당 +6 dB. 매우 밝고 날카로운 노이즈.'
+};
+
+let currentType = 'white';
+let audioCtx = null;
+let source = null;
+let isPlaying = false;
+
+document.querySelectorAll('.ntype').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.ntype').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentType = btn.dataset.t;
+    document.getElementById('typeDesc').textContent = descs[currentType];
+    drawPreview();
+  });
+});
+document.getElementById('typeDesc').textContent = descs['white'];
+
+const ampSlider = document.getElementById('amp');
+const durSlider = document.getElementById('dur');
+const srSelect = document.getElementById('sr');
+const seedInput = document.getElementById('seed');
+const preview = document.getElementById('preview');
+const playBtn = document.getElementById('playBtn');
+const stopBtn = document.getElementById('stopBtn');
+const dlBtn = document.getElementById('dlBtn');
+const info = document.getElementById('info');
+
+document.getElementById('randSeed').addEventListener('click', () => {
+  seedInput.value = Math.floor(Math.random() * 999999);
+  drawPreview();
+});
+
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function generateNoise(type, amp, numSamples, rng) {
+  const out = new Float32Array(numSamples);
+  if (type === 'white') {
+    for (let i = 0; i < numSamples; i++) out[i] = (rng() * 2 - 1) * amp;
+  } else if (type === 'pink') {
+    let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+    for (let i = 0; i < numSamples; i++) {
+      const w = rng() * 2 - 1;
+      b0=0.99886*b0+w*0.0555179; b1=0.99332*b1+w*0.0750759;
+      b2=0.96900*b2+w*0.1538520; b3=0.86650*b3+w*0.3104856;
+      b4=0.55000*b4+w*0.5329522; b5=-0.7616*b5-w*0.0168980;
+      out[i] = (b0+b1+b2+b3+b4+b5+b6+w*0.5362) * amp * 0.11;
+      b6 = w * 0.115926;
+    }
+  } else if (type === 'brown') {
+    let last = 0;
+    for (let i = 0; i < numSamples; i++) {
+      const w = rng() * 2 - 1;
+      last = (last + 0.02 * w) / 1.02;
+      out[i] = last * amp * 3.5;
+    }
+  } else if (type === 'blue') {
+    let prev = 0;
+    for (let i = 0; i < numSamples; i++) {
+      const w = rng() * 2 - 1;
+      out[i] = (w - prev) * amp * 0.6;
+      prev = w;
+    }
+  } else if (type === 'violet') {
+    let prev = 0, pprev = 0;
+    for (let i = 0; i < numSamples; i++) {
+      const w = rng() * 2 - 1;
+      out[i] = (w - 2*prev + pprev) * amp * 0.3;
+      pprev = prev; prev = w;
+    }
+  }
+  // normalize
+  let mx = 0;
+  for (let i = 0; i < numSamples; i++) if (Math.abs(out[i]) > mx) mx = Math.abs(out[i]);
+  if (mx > 0) for (let i = 0; i < numSamples; i++) out[i] = (out[i] / mx) * amp;
+  return out;
+}
+
+function drawPreview() {
+  const amp = parseFloat(ampSlider.value);
+  const seed = parseInt(seedInput.value) || 42;
+  const rng = mulberry32(seed);
+  const n = 2000;
+  const samples = generateNoise(currentType, amp, n, rng);
+
+  const ctx = preview.getContext('2d');
+  const w = preview.width = preview.offsetWidth * window.devicePixelRatio;
+  const h = preview.height = 80 * window.devicePixelRatio;
+  ctx.clearRect(0, 0, w, h);
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const colors = { white:'#888780', pink:'#D4537E', brown:'#D85A30', blue:'#378ADD', violet:'#7F77DD' };
+  const darkColors = { white:'#B4B2A9', pink:'#ED93B1', brown:'#F0997B', blue:'#85B7EB', violet:'#AFA9EC' };
+  const lineColor = isDark ? darkColors[currentType] : colors[currentType];
+  const axisColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+
+  ctx.strokeStyle = axisColor; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < w; i++) {
+    const s = samples[Math.floor(i / w * n)];
+    const y = h/2 - s * (h/2 - 4);
+    i === 0 ? ctx.moveTo(i, y) : ctx.lineTo(i, y);
+  }
+  ctx.stroke();
+}
+
+function encodeWav(samples, sr) {
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const w4 = (o,s) => { for(let i=0;i<4;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  w4(0,'RIFF'); v.setUint32(4,36+n*2,true); w4(8,'WAVE');
+  w4(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w4(36,'data'); v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++) {
+    const s = Math.max(-1,Math.min(1,samples[i]));
+    v.setInt16(44+i*2, s<0?s*0x8000:s*0x7FFF, true);
+  }
+  return buf;
+}
+
+function stopAudio() {
+  if (source) { try { source.stop(); } catch(e) {} source = null; }
+  isPlaying = false;
+  playBtn.disabled = false; stopBtn.disabled = true;
+  playBtn.textContent = '재생';
+}
+
+playBtn.addEventListener('click', () => {
+  if (isPlaying) return;
+  const amp = parseFloat(ampSlider.value);
+  const dur = parseFloat(durSlider.value);
+  const sr = parseInt(srSelect.value);
+  const seed = parseInt(seedInput.value) || 42;
+  const rng = mulberry32(seed);
+  const n = Math.floor(sr * dur);
+  const samples = generateNoise(currentType, amp, n, rng);
+
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sr });
+  const abuf = audioCtx.createBuffer(1, samples.length, sr);
+  abuf.copyToChannel(samples, 0);
+  source = audioCtx.createBufferSource();
+  source.buffer = abuf;
+  source.connect(audioCtx.destination);
+  source.onended = stopAudio;
+  source.start();
+  isPlaying = true;
+  playBtn.disabled = true; stopBtn.disabled = false;
+  playBtn.textContent = '재생 중...';
+});
+
+stopBtn.addEventListener('click', stopAudio);
+
+dlBtn.addEventListener('click', () => {
+  const amp = parseFloat(ampSlider.value);
+  const dur = parseFloat(durSlider.value);
+  const sr = parseInt(srSelect.value);
+  const seed = parseInt(seedInput.value) || 42;
+  const rng = mulberry32(seed);
+  const n = Math.floor(sr * dur);
+  const samples = generateNoise(currentType, amp, n, rng);
+  const wavBuf = encodeWav(samples, sr);
+  const blob = new Blob([wavBuf], { type:'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${currentType}_noise_${dur}s_seed${seed}.wav`;
+  a.click(); URL.revokeObjectURL(url);
+  info.textContent = `저장: ${currentType}_noise_${dur}s_seed${seed}.wav (${(wavBuf.byteLength/1024).toFixed(1)} KB)`;
+});
+
+ampSlider.addEventListener('input', () => {
+  document.getElementById('ampVal').textContent = parseFloat(ampSlider.value).toFixed(2);
+  drawPreview();
+});
+durSlider.addEventListener('input', () => {
+  document.getElementById('durVal').textContent = parseFloat(durSlider.value).toFixed(1);
+});
+srSelect.addEventListener('change', () => { audioCtx = null; });
+seedInput.addEventListener('input', drawPreview);
+
+document.getElementById('ampVal').textContent = '0.50';
+document.getElementById('durVal').textContent = '3.0';
+drawPreview();
+</script>
+
+<style>
+.ntype { transition: background 0.15s; }
+.ntype.active { background: var(--color-background-secondary); font-weight: 500; }
+</style>

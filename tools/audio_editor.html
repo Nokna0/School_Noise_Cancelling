@@ -1,0 +1,552 @@
+
+<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">오디오 에디터</h2>
+<div style="padding:1rem 0;font-size:14px;">
+
+<div id="dropZone" style="border:0.5px dashed var(--color-border-secondary);border-radius:var(--border-radius-lg);padding:28px;text-align:center;cursor:pointer;margin-bottom:1rem;color:var(--color-text-secondary);font-size:13px;">
+  클릭 또는 드래그로 오디오 파일 업로드 (WAV, MP3, OGG 등)
+  <input type="file" id="fileIn" accept="audio/*" style="display:none;">
+</div>
+<div id="errMsg" style="display:none;color:var(--color-text-danger);font-size:12px;margin-bottom:8px;text-align:center;"></div>
+
+<div id="editor" style="display:none;">
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
+  <span id="fileName" style="font-size:12px;color:var(--color-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;"></span>
+  <span id="fileInfo" style="font-size:12px;color:var(--color-text-secondary);white-space:nowrap;flex-shrink:0;"></span>
+</div>
+
+<div style="position:relative;margin-bottom:2px;">
+  <canvas id="waveCanvas" style="width:100%;height:110px;display:block;cursor:crosshair;border-radius:var(--border-radius-md);background:var(--color-background-secondary);"></canvas>
+  <canvas id="overCanvas" style="position:absolute;top:0;left:0;width:100%;height:110px;pointer-events:none;border-radius:var(--border-radius-md);"></canvas>
+</div>
+<div id="ruler" style="position:relative;height:18px;margin-bottom:8px;user-select:none;font-size:10px;"></div>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap;">
+  <div style="display:flex;gap:6px;align-items:center;">
+    <button id="btnRew" style="padding:5px 10px;font-size:13px;">&#9664;&#9664;</button>
+    <button id="btnPlay" style="padding:5px 14px;font-size:13px;">&#9654;</button>
+    <button id="btnStop" style="padding:5px 10px;font-size:13px;">&#9632;</button>
+    <button id="btnPlaySel" style="padding:5px 10px;font-size:12px;">선택 재생</button>
+  </div>
+  <div style="font-size:12px;color:var(--color-text-secondary);font-variant-numeric:tabular-nums;">
+    <span id="posDisplay">0.000</span> / <span id="durDisplay">0.000</span>s
+    &nbsp;|&nbsp; 선택: <span id="selDisplay">없음</span>
+  </div>
+  <div style="display:flex;gap:6px;">
+    <button id="btnUndo" style="padding:5px 10px;font-size:12px;" disabled>실행 취소</button>
+    <button id="btnRedo" style="padding:5px 10px;font-size:12px;" disabled>다시 실행</button>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px;">
+  <button class="op" data-op="trim"      style="padding:8px 4px;font-size:12px;">✂ 트림</button>
+  <button class="op" data-op="delete"    style="padding:8px 4px;font-size:12px;">✕ 삭제</button>
+  <button class="op" data-op="silence"   style="padding:8px 4px;font-size:12px;">— 무음</button>
+  <button class="op" data-op="reverse"   style="padding:8px 4px;font-size:12px;">⇄ 반전</button>
+  <button class="op" data-op="fadein"    style="padding:8px 4px;font-size:12px;">▶ 페이드 인</button>
+  <button class="op" data-op="fadeout"   style="padding:8px 4px;font-size:12px;">◀ 페이드 아웃</button>
+  <button class="op" data-op="normalize" style="padding:8px 4px;font-size:12px;">⤢ 정규화</button>
+  <button class="op" data-op="gain"      style="padding:8px 4px;font-size:12px;">♪ 게인</button>
+</div>
+
+<div id="gainPanel" style="display:none;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px;margin-bottom:10px;">
+  <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:6px;">게인 배율</div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <input type="range" id="gainSlider" min="0" max="3" value="1" step="0.01" style="flex:1;">
+    <span id="gainSliderVal" style="font-size:13px;font-weight:500;min-width:36px;">1.00</span>
+    <button id="applyGain" style="padding:5px 12px;font-size:12px;">적용</button>
+  </div>
+</div>
+
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+  <span style="font-size:12px;color:var(--color-text-secondary);">줌:</span>
+  <input type="range" id="zoomSlider" min="1" max="20" value="1" step="0.1" style="flex:1;">
+  <span id="zoomVal" style="font-size:12px;color:var(--color-text-secondary);min-width:36px;">x1.0</span>
+  <span style="font-size:12px;color:var(--color-text-secondary);">스크롤:</span>
+  <input type="range" id="scrollSlider" min="0" max="100" value="0" step="0.1" style="flex:1;">
+</div>
+
+<div style="display:flex;gap:8px;margin-top:4px;">
+  <button id="btnSelectAll" style="padding:6px 10px;font-size:12px;">전체 선택</button>
+  <button id="btnClearSel"  style="padding:6px 10px;font-size:12px;">선택 해제</button>
+  <button id="btnNewFile"   style="padding:6px 10px;font-size:12px;">새 파일</button>
+  <div style="flex:1;"></div>
+  <button id="dlBtn" style="padding:6px 14px;font-size:13px;font-weight:500;">WAV 다운로드</button>
+</div>
+<div id="statusBar" style="margin-top:8px;font-size:11px;color:var(--color-text-secondary);min-height:14px;text-align:center;"></div>
+</div>
+</div>
+
+<script>
+let audioCtx = null;
+let samples = null, sampleRate = 44100;
+let origName = 'output';
+let selStart = null, selEnd = null;
+let playPos = 0, playStartTime = 0, playSource = null, isPlaying = false;
+let playStartSample = 0;
+let zoom = 1, scrollOffset = 0;
+let undoStack = [], redoStack = [];
+let isDragging = false;
+let animFrame = null;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+const waveCanvas = document.getElementById('waveCanvas');
+const overCanvas = document.getElementById('overCanvas');
+const wCtx = waveCanvas.getContext('2d');
+const oCtx = overCanvas.getContext('2d');
+
+// ── File load ──────────────────────────────────────────────
+function showErr(msg) {
+  const el = document.getElementById('errMsg');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function hideErr() { document.getElementById('errMsg').style.display = 'none'; }
+
+document.getElementById('dropZone').addEventListener('click', () => document.getElementById('fileIn').click());
+document.getElementById('dropZone').addEventListener('dragover', e => e.preventDefault());
+document.getElementById('dropZone').addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if(f) loadFile(f); });
+document.getElementById('fileIn').addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]); });
+document.getElementById('btnNewFile').addEventListener('click', () => {
+  stopPlayback();
+  document.getElementById('editor').style.display = 'none';
+  document.getElementById('dropZone').style.display = 'block';
+  document.getElementById('dropZone').textContent = '클릭 또는 드래그로 오디오 파일 업로드 (WAV, MP3, OGG 등)';
+  const inp = document.createElement('input');
+  inp.type='file'; inp.id='fileIn'; inp.accept='audio/*'; inp.style.display='none';
+  inp.addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]); });
+  document.getElementById('dropZone').appendChild(inp);
+  hideErr();
+});
+
+function loadFile(file) {
+  hideErr();
+  document.getElementById('dropZone').textContent = '불러오는 중...';
+
+  const ctx = getAudioCtx();
+  const reader = new FileReader();
+
+  reader.onerror = () => {
+    document.getElementById('dropZone').textContent = '클릭하여 다시 시도';
+    showErr('파일을 읽을 수 없습니다.');
+  };
+
+  reader.onload = function(ev) {
+    const arrayBuf = ev.target.result.slice(0); // copy
+    ctx.decodeAudioData(
+      arrayBuf,
+      function(decoded) {              // success
+        sampleRate = decoded.sampleRate;
+        origName = file.name.replace(/\.[^.]+$/, '');
+
+        const ch0 = decoded.getChannelData(0);
+        const ch1 = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : null;
+        samples = new Float32Array(ch0.length);
+        for (let i = 0; i < ch0.length; i++)
+          samples[i] = ch1 ? (ch0[i] + ch1[i]) / 2 : ch0[i];
+
+        selStart = null; selEnd = null;
+        playPos = 0; zoom = 1; scrollOffset = 0;
+        undoStack = []; redoStack = [];
+        document.getElementById('zoomSlider').value = 1;
+        document.getElementById('scrollSlider').value = 0;
+
+        document.getElementById('dropZone').style.display = 'none';
+        document.getElementById('editor').style.display = 'block';
+        document.getElementById('fileName').textContent = file.name;
+        updateInfo();
+        setTimeout(drawWave, 50);   // wait for layout
+        updateUndoButtons();
+        setStatus('파일 로드 완료');
+      },
+      function(err) {                  // decode error
+        document.getElementById('dropZone').textContent = '클릭하여 다시 시도';
+        showErr('오디오 디코딩 실패: ' + (err ? err.message || err : '지원하지 않는 포맷'));
+      }
+    );
+  };
+
+  reader.readAsArrayBuffer(file);
+}
+
+// ── Info ───────────────────────────────────────────────────
+function updateInfo() {
+  const dur = (samples.length / sampleRate).toFixed(2);
+  document.getElementById('fileInfo').textContent = `${sampleRate} Hz | ${dur}s | mono`;
+  document.getElementById('durDisplay').textContent = dur;
+}
+
+// ── Coordinate helpers ─────────────────────────────────────
+function sampleToX(si) {
+  const total = samples.length;
+  const visStart = scrollOffset * total / 100;
+  const visLen = total / zoom;
+  return ((si - visStart) / visLen) * waveCanvas.width;
+}
+function xToSample(x) {
+  const total = samples.length;
+  const visStart = scrollOffset * total / 100;
+  const visLen = total / zoom;
+  return Math.max(0, Math.min(total, Math.round(visStart + (x / waveCanvas.width) * visLen)));
+}
+
+// ── Draw ───────────────────────────────────────────────────
+function drawWave() {
+  if (!samples) return;
+  const dpr = window.devicePixelRatio || 1;
+  waveCanvas.width  = waveCanvas.offsetWidth  * dpr;
+  waveCanvas.height = waveCanvas.offsetHeight * dpr;
+  overCanvas.width  = waveCanvas.width;
+  overCanvas.height = waveCanvas.height;
+  const w = waveCanvas.width, h = waveCanvas.height;
+
+  wCtx.clearRect(0, 0, w, h);
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const waveCol = isDark ? '#AFA9EC' : '#534AB7';
+
+  const total = samples.length;
+  const visStart = Math.floor(scrollOffset * total / 100);
+  const visLen   = Math.ceil(total / zoom);
+
+  wCtx.strokeStyle = waveCol;
+  wCtx.lineWidth = 1;
+  for (let px = 0; px < w; px++) {
+    const sI = visStart + Math.floor(px / w * visLen);
+    const sJ = Math.min(total, visStart + Math.floor((px + 1) / w * visLen));
+    let mn = 0, mx = 0;
+    for (let s = sI; s < sJ; s++) {
+      if (samples[s] < mn) mn = samples[s];
+      if (samples[s] > mx) mx = samples[s];
+    }
+    wCtx.beginPath();
+    wCtx.moveTo(px + 0.5, h / 2 - mx * (h / 2 - 2));
+    wCtx.lineTo(px + 0.5, h / 2 - mn * (h / 2 - 2));
+    wCtx.stroke();
+  }
+
+  wCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+  wCtx.lineWidth = 0.5;
+  wCtx.beginPath(); wCtx.moveTo(0, h/2); wCtx.lineTo(w, h/2); wCtx.stroke();
+
+  drawOverlay();
+  drawRuler();
+}
+
+function drawOverlay() {
+  if (!samples) return;
+  const w = overCanvas.width, h = overCanvas.height;
+  oCtx.clearRect(0, 0, w, h);
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  if (selStart !== null && selEnd !== null && Math.abs(selEnd - selStart) > 1) {
+    const x1 = sampleToX(Math.min(selStart, selEnd));
+    const x2 = sampleToX(Math.max(selStart, selEnd));
+    oCtx.fillStyle = isDark ? 'rgba(29,158,117,0.22)' : 'rgba(29,158,117,0.18)';
+    oCtx.fillRect(x1, 0, x2 - x1, h);
+    oCtx.strokeStyle = isDark ? 'rgba(29,158,117,0.8)' : 'rgba(15,110,86,0.8)';
+    oCtx.lineWidth = 1;
+    oCtx.beginPath(); oCtx.moveTo(x1, 0); oCtx.lineTo(x1, h); oCtx.stroke();
+    oCtx.beginPath(); oCtx.moveTo(x2, 0); oCtx.lineTo(x2, h); oCtx.stroke();
+  }
+
+  const px = sampleToX(playPos);
+  if (px >= 0 && px <= w) {
+    oCtx.strokeStyle = isDark ? '#FAC775' : '#BA7517';
+    oCtx.lineWidth = 1.5;
+    oCtx.beginPath(); oCtx.moveTo(px, 0); oCtx.lineTo(px, h); oCtx.stroke();
+  }
+}
+
+function drawRuler() {
+  const ruler = document.getElementById('ruler');
+  ruler.innerHTML = '';
+  if (!samples) return;
+  const total = samples.length;
+  const visStart = scrollOffset * total / 100;
+  const visLen = total / zoom;
+  const dur = visLen / sampleRate;
+  const w = waveCanvas.offsetWidth;
+  const steps = [0.001,0.005,0.01,0.05,0.1,0.5,1,5,10,30,60,300];
+  let step = steps[steps.length - 1];
+  for (const s of steps) { if (dur / s < w / 60) { step = s; break; } }
+  const startSec = visStart / sampleRate;
+  const first = Math.ceil(startSec / step) * step;
+  for (let t = first; t <= startSec + dur + step; t += step) {
+    const frac = (t - startSec) / dur;
+    if (frac < 0 || frac > 1.02) continue;
+    const el = document.createElement('div');
+    el.style.cssText = `position:absolute;left:${(frac*w).toFixed(1)}px;transform:translateX(-50%);white-space:nowrap;color:var(--color-text-secondary);`;
+    el.textContent = t >= 60
+      ? `${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`
+      : `${t.toFixed(step < 0.1 ? 3 : step < 1 ? 1 : 0)}s`;
+    ruler.appendChild(el);
+  }
+}
+
+// ── Mouse interaction ──────────────────────────────────────
+function canvasX(e) {
+  const rect = waveCanvas.getBoundingClientRect();
+  return (e.clientX - rect.left) * (window.devicePixelRatio || 1);
+}
+
+waveCanvas.addEventListener('mousedown', e => {
+  isDragging = true;
+  const x = canvasX(e);
+  selStart = xToSample(x);
+  selEnd = selStart;
+  drawOverlay(); updateSelDisplay();
+});
+window.addEventListener('mousemove', e => {
+  if (!isDragging || !samples) return;
+  const rect = waveCanvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (window.devicePixelRatio || 1);
+  selEnd = xToSample(x);
+  drawOverlay(); updateSelDisplay();
+});
+window.addEventListener('mouseup', e => {
+  if (!isDragging) return;
+  isDragging = false;
+  if (selStart !== null && selEnd !== null && Math.abs(selEnd - selStart) < 8) {
+    playPos = selStart;
+    selStart = null; selEnd = null;
+    drawOverlay(); updateSelDisplay();
+    document.getElementById('posDisplay').textContent = (playPos / sampleRate).toFixed(3);
+  }
+});
+
+waveCanvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    zoom = Math.max(1, Math.min(20, zoom * (e.deltaY < 0 ? 1.15 : 0.87)));
+    document.getElementById('zoomSlider').value = zoom;
+    document.getElementById('zoomVal').textContent = `x${zoom.toFixed(1)}`;
+  } else {
+    const maxScroll = 100 * (1 - 1 / zoom);
+    scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset + e.deltaY * 0.05));
+    document.getElementById('scrollSlider').value = scrollOffset;
+  }
+  drawWave();
+}, { passive: false });
+
+document.getElementById('zoomSlider').addEventListener('input', function() {
+  zoom = parseFloat(this.value);
+  document.getElementById('zoomVal').textContent = `x${zoom.toFixed(1)}`;
+  drawWave();
+});
+document.getElementById('scrollSlider').addEventListener('input', function() {
+  scrollOffset = parseFloat(this.value);
+  drawWave();
+});
+
+function updateSelDisplay() {
+  if (selStart === null || selEnd === null || Math.abs(selEnd - selStart) < 2) {
+    document.getElementById('selDisplay').textContent = '없음';
+  } else {
+    const a = Math.min(selStart, selEnd) / sampleRate;
+    const b = Math.max(selStart, selEnd) / sampleRate;
+    document.getElementById('selDisplay').textContent =
+      `${a.toFixed(3)}s - ${b.toFixed(3)}s (${(b - a).toFixed(3)}s)`;
+  }
+}
+
+// ── Playback ───────────────────────────────────────────────
+function animate() {
+  if (!isPlaying) return;
+  const elapsed = getAudioCtx().currentTime - playStartTime;
+  playPos = Math.min(samples.length, playStartSample + Math.floor(elapsed * sampleRate));
+  document.getElementById('posDisplay').textContent = (playPos / sampleRate).toFixed(3);
+  drawOverlay();
+  animFrame = requestAnimationFrame(animate);
+}
+
+function startPlayback(from, to) {
+  stopPlayback();
+  const ctx = getAudioCtx();
+  ctx.resume();
+  const n = to - from;
+  if (n <= 0) return;
+  const buf = ctx.createBuffer(1, n, sampleRate);
+  buf.copyToChannel(samples.subarray(from, to), 0);
+  playSource = ctx.createBufferSource();
+  playSource.buffer = buf;
+  playSource.connect(ctx.destination);
+  playSource.onended = () => { if (isPlaying) stopPlayback(); };
+  playStartSample = from;
+  playStartTime = ctx.currentTime;
+  isPlaying = true;
+  playSource.start();
+  document.getElementById('btnPlay').textContent = '⏸';
+  animFrame = requestAnimationFrame(animate);
+}
+
+function stopPlayback() {
+  if (playSource) { try { playSource.stop(); } catch(e) {} playSource = null; }
+  isPlaying = false;
+  cancelAnimationFrame(animFrame);
+  document.getElementById('btnPlay').textContent = '▶';
+}
+
+document.getElementById('btnPlay').addEventListener('click', () => {
+  if (!samples) return;
+  if (isPlaying) { stopPlayback(); return; }
+  startPlayback(playPos, samples.length);
+});
+document.getElementById('btnStop').addEventListener('click', () => {
+  stopPlayback(); playPos = 0; drawOverlay();
+  document.getElementById('posDisplay').textContent = '0.000';
+});
+document.getElementById('btnRew').addEventListener('click', () => {
+  stopPlayback(); playPos = 0; drawOverlay();
+  document.getElementById('posDisplay').textContent = '0.000';
+});
+document.getElementById('btnPlaySel').addEventListener('click', () => {
+  const sel = getSel(); if (!sel) { setStatus('선택 구간 없음'); return; }
+  playPos = sel[0];
+  startPlayback(sel[0], sel[1]);
+});
+
+// ── Select all / clear ─────────────────────────────────────
+document.getElementById('btnSelectAll').addEventListener('click', () => {
+  if (!samples) return;
+  selStart = 0; selEnd = samples.length;
+  drawOverlay(); updateSelDisplay();
+});
+document.getElementById('btnClearSel').addEventListener('click', () => {
+  selStart = null; selEnd = null; drawOverlay(); updateSelDisplay();
+});
+
+// ── Undo / Redo ────────────────────────────────────────────
+function pushUndo() {
+  undoStack.push(samples.slice());
+  if (undoStack.length > 30) undoStack.shift();
+  redoStack = [];
+  updateUndoButtons();
+}
+function updateUndoButtons() {
+  document.getElementById('btnUndo').disabled = undoStack.length === 0;
+  document.getElementById('btnRedo').disabled = redoStack.length === 0;
+}
+function postEdit() {
+  stopPlayback(); playPos = 0;
+  selStart = null; selEnd = null;
+  updateInfo(); drawWave(); updateSelDisplay();
+  document.getElementById('posDisplay').textContent = '0.000';
+}
+document.getElementById('btnUndo').addEventListener('click', () => {
+  if (!undoStack.length) return;
+  redoStack.push(samples.slice());
+  samples = undoStack.pop();
+  postEdit(); updateUndoButtons(); setStatus('실행 취소');
+});
+document.getElementById('btnRedo').addEventListener('click', () => {
+  if (!redoStack.length) return;
+  undoStack.push(samples.slice());
+  samples = redoStack.pop();
+  postEdit(); updateUndoButtons(); setStatus('다시 실행');
+});
+
+// ── Operations ─────────────────────────────────────────────
+function getSel() {
+  if (selStart === null || selEnd === null || Math.abs(selEnd - selStart) < 2) return null;
+  return [Math.min(selStart, selEnd), Math.max(selStart, selEnd)];
+}
+
+document.querySelectorAll('.op').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const op = btn.dataset.op;
+    if (op === 'gain') {
+      const p = document.getElementById('gainPanel');
+      p.style.display = p.style.display === 'none' ? 'block' : 'none';
+      return;
+    }
+    runOp(op);
+  });
+});
+document.getElementById('gainSlider').addEventListener('input', function() {
+  document.getElementById('gainSliderVal').textContent = parseFloat(this.value).toFixed(2);
+});
+document.getElementById('applyGain').addEventListener('click', () => {
+  runOp('gain'); document.getElementById('gainPanel').style.display = 'none';
+});
+
+function runOp(op) {
+  if (!samples) return;
+
+  if (op === 'normalize') {
+    pushUndo();
+    let mx = 0;
+    for (let i = 0; i < samples.length; i++) if (Math.abs(samples[i]) > mx) mx = Math.abs(samples[i]);
+    if (mx > 0) for (let i = 0; i < samples.length; i++) samples[i] /= mx;
+    setStatus('정규화 완료'); drawWave(); return;
+  }
+
+  const sel = getSel();
+  if (!sel) { setStatus('먼저 구간을 선택하세요.'); return; }
+  const [a, b] = sel;
+
+  pushUndo();
+  if (op === 'trim') {
+    samples = samples.slice(a, b);
+    setStatus(`트림: ${(a/sampleRate).toFixed(3)}s - ${(b/sampleRate).toFixed(3)}s`);
+  } else if (op === 'delete') {
+    const n = new Float32Array(samples.length - (b - a));
+    n.set(samples.subarray(0, a), 0);
+    n.set(samples.subarray(b), a);
+    samples = n;
+    setStatus(`삭제: ${((b-a)/sampleRate).toFixed(3)}s 제거`);
+  } else if (op === 'silence') {
+    for (let i = a; i < b; i++) samples[i] = 0;
+    setStatus('무음 처리 완료');
+  } else if (op === 'reverse') {
+    Array.prototype.reverse.call(samples.subarray(a, b));
+    setStatus('반전 완료');
+  } else if (op === 'fadein') {
+    const len = b - a;
+    for (let i = 0; i < len; i++) samples[a+i] *= i / len;
+    setStatus('페이드 인 완료');
+  } else if (op === 'fadeout') {
+    const len = b - a;
+    for (let i = 0; i < len; i++) samples[a+i] *= (len - i) / len;
+    setStatus('페이드 아웃 완료');
+  } else if (op === 'gain') {
+    const g = parseFloat(document.getElementById('gainSlider').value);
+    for (let i = a; i < b; i++) samples[i] = Math.max(-1, Math.min(1, samples[i] * g));
+    setStatus(`게인 x${g.toFixed(2)} 적용`);
+  }
+
+  postEdit(); updateUndoButtons();
+}
+
+// ── WAV export ─────────────────────────────────────────────
+document.getElementById('dlBtn').addEventListener('click', () => {
+  if (!samples) return;
+  const n = samples.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const w4 = (o, s) => { for(let i=0;i<4;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  w4(0,'RIFF'); v.setUint32(4,36+n*2,true); w4(8,'WAVE');
+  w4(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,sampleRate*2,true);
+  v.setUint16(32,2,true); v.setUint16(34,16,true);
+  w4(36,'data'); v.setUint32(40,n*2,true);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(44+i*2, s < 0 ? s*0x8000 : s*0x7FFF, true);
+  }
+  const blob = new Blob([buf], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = origName + '_edited.wav'; a.click();
+  URL.revokeObjectURL(url);
+  setStatus(`저장: ${origName}_edited.wav (${(buf.byteLength/1024).toFixed(1)} KB)`);
+});
+
+function setStatus(msg) { document.getElementById('statusBar').textContent = msg; }
+
+window.addEventListener('resize', () => { if (samples) drawWave(); });
+</script>

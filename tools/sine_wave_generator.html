@@ -1,0 +1,202 @@
+
+<h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">사인파 오디오 파일 생성기</h2>
+<div style="padding:1rem 0;">
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">주파수 (Hz)</div>
+    <input type="range" id="freq" min="20" max="20000" value="440" step="1" style="width:100%;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <input type="number" id="freqNum" value="440" min="20" max="20000" style="width:90px;font-size:15px;font-weight:500;">
+      <span style="font-size:13px;color:var(--color-text-secondary);">Hz</span>
+    </div>
+  </div>
+
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">진폭</div>
+    <input type="range" id="amp" min="0.01" max="1.0" value="0.5" step="0.01" style="width:100%;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span id="ampVal" style="font-size:15px;font-weight:500;">0.50</span>
+      <span style="font-size:13px;color:var(--color-text-secondary);">(최대 1.0)</span>
+    </div>
+  </div>
+
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">길이 (초)</div>
+    <input type="range" id="dur" min="0.1" max="30" value="3" step="0.1" style="width:100%;margin-bottom:6px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span id="durVal" style="font-size:15px;font-weight:500;">3.0</span>
+      <span style="font-size:13px;color:var(--color-text-secondary);">s</span>
+    </div>
+  </div>
+
+  <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+    <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">샘플레이트</div>
+    <select id="sr" style="width:100%;font-size:15px;font-weight:500;">
+      <option value="44100" selected>44100 Hz (CD)</option>
+      <option value="48000">48000 Hz (DAW)</option>
+      <option value="22050">22050 Hz</option>
+      <option value="16000">16000 Hz</option>
+      <option value="8000">8000 Hz</option>
+    </select>
+  </div>
+</div>
+
+<div style="margin-bottom:1.5rem;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
+  <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파형 미리보기</div>
+  <canvas id="preview" style="width:100%;height:80px;display:block;"></canvas>
+</div>
+
+<div style="display:flex;gap:10px;">
+  <button id="playBtn" style="flex:1;padding:10px;font-size:14px;">재생</button>
+  <button id="stopBtn" style="flex:1;padding:10px;font-size:14px;" disabled>정지</button>
+  <button id="dlBtn" style="flex:1;padding:10px;font-size:14px;font-weight:500;">WAV 다운로드</button>
+</div>
+
+<div id="info" style="margin-top:12px;font-size:12px;color:var(--color-text-secondary);text-align:center;"></div>
+</div>
+
+<script>
+let audioCtx = null;
+let source = null;
+let isPlaying = false;
+
+const freqSlider = document.getElementById('freq');
+const freqNum = document.getElementById('freqNum');
+const ampSlider = document.getElementById('amp');
+const ampVal = document.getElementById('ampVal');
+const durSlider = document.getElementById('dur');
+const durVal = document.getElementById('durVal');
+const srSelect = document.getElementById('sr');
+const preview = document.getElementById('preview');
+const playBtn = document.getElementById('playBtn');
+const stopBtn = document.getElementById('stopBtn');
+const dlBtn = document.getElementById('dlBtn');
+const info = document.getElementById('info');
+
+function getParams() {
+  return {
+    freq: parseFloat(freqSlider.value),
+    amp: parseFloat(ampSlider.value),
+    dur: parseFloat(durSlider.value),
+    sr: parseInt(srSelect.value)
+  };
+}
+
+function drawPreview() {
+  const { freq, amp } = getParams();
+  const ctx = preview.getContext('2d');
+  const w = preview.width = preview.offsetWidth * window.devicePixelRatio;
+  const h = preview.height = 80 * window.devicePixelRatio;
+  ctx.clearRect(0, 0, w, h);
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const lineColor = isDark ? '#7F77DD' : '#534AB7';
+  const axisColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
+
+  ctx.strokeStyle = axisColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, h/2);
+  ctx.lineTo(w, h/2);
+  ctx.stroke();
+
+  const cycles = Math.min(freq * 0.05, 10);
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i <= w; i++) {
+    const t = (i / w) * cycles * 2 * Math.PI;
+    const y = h/2 - (amp * (h/2 - 4)) * Math.sin(t);
+    i === 0 ? ctx.moveTo(i, y) : ctx.lineTo(i, y);
+  }
+  ctx.stroke();
+}
+
+function generateSamples(freq, amp, dur, sr) {
+  const numSamples = Math.floor(sr * dur);
+  const samples = new Float32Array(numSamples);
+  const twoPiF = 2 * Math.PI * freq;
+  for (let i = 0; i < numSamples; i++) {
+    samples[i] = amp * Math.sin(twoPiF * i / sr);
+  }
+  return samples;
+}
+
+function encodeWav(samples, sr) {
+  const numSamples = samples.length;
+  const bytesPerSample = 2;
+  const buffer = new ArrayBuffer(44 + numSamples * bytesPerSample);
+  const view = new DataView(buffer);
+  const write4 = (o, s) => { for (let i = 0; i < 4; i++) view.setUint8(o+i, s.charCodeAt(i)); };
+  const write2 = (o, v) => view.setUint16(o, v, true);
+  const write4i = (o, v) => view.setUint32(o, v, true);
+  write4(0,'RIFF'); write4i(4, 36 + numSamples * bytesPerSample); write4(8,'WAVE');
+  write4(12,'fmt '); write4i(16,16); write2(20,1); write2(22,1);
+  write4i(24,sr); write4i(28,sr*bytesPerSample); write2(32,bytesPerSample); write2(34,16);
+  write4(36,'data'); write4i(40, numSamples * bytesPerSample);
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buffer;
+}
+
+function stopAudio() {
+  if (source) { try { source.stop(); } catch(e) {} source = null; }
+  isPlaying = false;
+  playBtn.disabled = false;
+  stopBtn.disabled = true;
+  playBtn.textContent = '재생';
+}
+
+playBtn.addEventListener('click', () => {
+  if (isPlaying) return;
+  const { freq, amp, dur, sr } = getParams();
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sr });
+  const samples = generateSamples(freq, amp, dur, sr);
+  const buf = audioCtx.createBuffer(1, samples.length, sr);
+  buf.copyToChannel(samples, 0);
+  source = audioCtx.createBufferSource();
+  source.buffer = buf;
+  source.connect(audioCtx.destination);
+  source.onended = () => { isPlaying = false; playBtn.disabled = false; stopBtn.disabled = true; playBtn.textContent = '재생'; };
+  source.start();
+  isPlaying = true;
+  playBtn.disabled = true;
+  stopBtn.disabled = false;
+  playBtn.textContent = '재생 중...';
+});
+
+stopBtn.addEventListener('click', stopAudio);
+
+dlBtn.addEventListener('click', () => {
+  const { freq, amp, dur, sr } = getParams();
+  const samples = generateSamples(freq, amp, dur, sr);
+  const wavBuf = encodeWav(samples, sr);
+  const blob = new Blob([wavBuf], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `sine_${freq}Hz_${dur}s.wav`;
+  a.click();
+  URL.revokeObjectURL(url);
+  const size = (wavBuf.byteLength / 1024).toFixed(1);
+  info.textContent = `저장 완료: sine_${freq}Hz_${dur}s.wav (${size} KB)`;
+});
+
+function update() {
+  freqNum.value = freqSlider.value;
+  ampVal.textContent = parseFloat(ampSlider.value).toFixed(2);
+  durVal.textContent = parseFloat(durSlider.value).toFixed(1);
+  drawPreview();
+}
+
+freqSlider.addEventListener('input', update);
+freqNum.addEventListener('input', () => { freqSlider.value = freqNum.value; drawPreview(); });
+ampSlider.addEventListener('input', update);
+durSlider.addEventListener('input', update);
+srSelect.addEventListener('change', () => { audioCtx = null; drawPreview(); });
+
+update();
+</script>
