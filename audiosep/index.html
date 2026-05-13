@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>웹 기반 실시간 적응형 소음 제어 시스템</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .control-panel { margin-top: 20px; padding: 15px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h2>AudioSep + 적응형 필터 웹 시스템</h2>
+    
+    <div class="control-panel">
+        <label for="query">지울 소리 입력 (예: 진공청소기): </label>
+        <input type="text" id="query" placeholder="텍스트 쿼리 입력">
+        <button id="updateQueryBtn">AI에 참조 신호 요청</button>
+    </div>
+
+    <div class="control-panel">
+        <button id="startBtn">마이크 켜기 및 필터 시작</button>
+        <button id="stopBtn" disabled>정지</button>
+        <br><br>
+        <label for="stepSize">필터 Step-size ($\mu$): </label>
+        <input type="range" id="stepSize" min="0.0001" max="0.1" step="0.0001" value="0.01">
+        <span id="muValue">0.01</span>
+    </div>
+
+    <div class="control-panel">
+        <h3 style="margin-top:0">파일 처리 모드</h3>
+        <input type="file" id="audioFile" accept="audio/*">
+        <button id="processFileBtn">필터 적용 및 처리</button>
+        <span id="processStatus" style="margin-left:10px; color:#555;"></span>
+        <br><br>
+        <a id="downloadLink" style="display:none; font-weight:bold;"></a>
+    </div>
+
+    <script src="main.js"></script>
+</body>
+</html>
