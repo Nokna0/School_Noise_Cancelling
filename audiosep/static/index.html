@@ -1,17 +1,38 @@
 <!DOCTYPE html>
 
+<!--
+  ============================================================
+  audiosep/static/index.html
+  ------------------------------------------------------------
+  실시간 노이즈 캔슬링 데모용 페이지.
+
+  화면 구성:
+    • [시작] 버튼 1개
+        - 클릭하면 마이크 권한을 요청하고 WebSocket 으로
+          서버에 오디오를 흘려 보내기 시작한다.
+    • 캔버스 1개 (id="waveCanvas")
+        - 매 프레임 NLMS 적응 필터가 추정해 낸 "오차 신호 e"
+          (= 잡음이 제거된 신호) 의 파형을 그려 보여 준다.
+
+  실제 동작 코드는 app.js 에, 색상/배치는 style.css 에 있다.
+  ============================================================
+-->
+
 <html lang="ko">
 
 <head>
 
+    <!-- 한글이 깨지지 않도록 UTF-8 로 명시. -->
     <meta charset="UTF-8">
 
+    <!-- 브라우저 탭에 표시될 제목. -->
     <title>
 
         Realtime AudioSep + NLMS
 
     </title>
 
+    <!-- 동일 폴더의 외부 스타일시트 연결. -->
     <link
         rel="stylesheet"
         href="style.css"
@@ -21,20 +42,33 @@
 
 <body>
 
+    <!-- 페이지 머리말. 화면 중앙에 큰 글씨로 표시된다. -->
     <h1>
 
         Realtime AudioSep + NLMS
 
     </h1>
 
+    <!--
+      "시작" 버튼.
+      자바스크립트(app.js) 에서 startBtn.onclick 에 핸들러를 붙여
+      클릭 시 마이크 캡쳐와 WebSocket 통신을 시작한다.
+      브라우저 정책상 마이크 접근은 반드시 사용자의
+      "명시적 동작(클릭)" 이 있어야 하므로 버튼이 꼭 필요하다.
+    -->
     <button id="startBtn">
 
         시작
 
     </button>
 
+    <!--
+      잡음 제거 결과 파형을 그릴 캔버스.
+      크기는 app.js 가 직접 width / height 를 지정해 준다.
+    -->
     <canvas id="waveCanvas"></canvas>
 
+    <!-- 실제 동작 로직. <body> 끝에 두어 DOM 이 준비된 뒤 로드되게 한다. -->
     <script src="app.js"></script>
 
 </body>

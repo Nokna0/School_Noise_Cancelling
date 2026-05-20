@@ -1,7 +1,28 @@
+<!--
+  ============================================================
+  tools/noise_generator.html
+  ------------------------------------------------------------
+  다섯 가지 색깔의 노이즈(White / Pink / Brown / Blue / Violet)를
+  브라우저에서 만들어 미리 듣고 WAV 로 다운로드할 수 있는
+  미니 도구. 노이즈 캔슬링 실험의 "잡음 소스" 가 필요할 때
+  사용한다.
+
+  각 색깔의 의미(스펙트럼 기울기):
+    • White  :  0  dB/oct  (모든 주파수에 균일한 에너지)
+    • Pink   : -3  dB/oct  (1/f, 자연음과 비슷한 분포)
+    • Brown  : -6  dB/oct  (1/f², 저음이 강함. Brownian)
+    • Blue   : +3  dB/oct  (고주파 강조)
+    • Violet : +6  dB/oct  (가장 날카로움)
+
+  재현성을 위해 시드(seed) 를 사용하는데, JS 의 Math.random 은
+  시드 지정이 안 되므로 직접 PRNG(mulberry32) 를 구현해 쓴다.
+  ============================================================
+-->
 
 <h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">노이즈 오디오 파일 생성기</h2>
 <div style="padding:1rem 0;">
 
+<!-- ── 노이즈 종류 선택 탭 ─────────────────────────────────── -->
 <div style="display:flex;gap:8px;margin-bottom:1.5rem;" id="typeBar">
   <button class="ntype active" data-t="white" style="flex:1;padding:8px 4px;font-size:13px;">White</button>
   <button class="ntype" data-t="pink" style="flex:1;padding:8px 4px;font-size:13px;">Pink</button>
@@ -10,9 +31,12 @@
   <button class="ntype" data-t="violet" style="flex:1;padding:8px 4px;font-size:13px;">Violet</button>
 </div>
 
+<!-- 현재 선택된 종류에 대한 한 줄 설명 (descs 객체에서 채워짐) -->
 <div id="typeDesc" style="font-size:13px;color:var(--color-text-secondary);margin-bottom:1.5rem;min-height:18px;"></div>
 
+<!-- ── 입력 카드 4분할 그리드 (진폭/길이/샘플레이트/시드) ───── -->
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+  <!-- 진폭 -->
   <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
     <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">진폭</div>
     <input type="range" id="amp" min="0.01" max="1.0" value="0.5" step="0.01" style="width:100%;margin-bottom:6px;">
@@ -22,6 +46,7 @@
     </div>
   </div>
 
+  <!-- 길이(초) -->
   <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
     <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">길이 (초)</div>
     <input type="range" id="dur" min="0.1" max="30" value="3" step="0.1" style="width:100%;margin-bottom:6px;">
@@ -31,6 +56,7 @@
     </div>
   </div>
 
+  <!-- 출력 샘플레이트 -->
   <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
     <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">샘플레이트</div>
     <select id="sr" style="width:100%;font-size:14px;font-weight:500;">
@@ -41,6 +67,7 @@
     </select>
   </div>
 
+  <!-- 시드 입력 + 랜덤 시드 생성 버튼 (재현성 확보) -->
   <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
     <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">시드 (재현성)</div>
     <div style="display:flex;gap:6px;align-items:center;">
@@ -50,21 +77,27 @@
   </div>
 </div>
 
+<!-- ── 파형 미리보기 (시드+종류 따라 즉시 갱신) ─────────────── -->
 <div style="margin-bottom:1.5rem;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;">
   <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파형 미리보기</div>
   <canvas id="preview" style="width:100%;height:80px;display:block;"></canvas>
 </div>
 
+<!-- ── 제어 버튼 ─────────────────────────────────────────── -->
 <div style="display:flex;gap:10px;">
   <button id="playBtn" style="flex:1;padding:10px;font-size:14px;">재생</button>
   <button id="stopBtn" style="flex:1;padding:10px;font-size:14px;" disabled>정지</button>
   <button id="dlBtn" style="flex:1;padding:10px;font-size:14px;font-weight:500;">WAV 다운로드</button>
 </div>
 
+<!-- 다운로드 결과 등 상태 메시지 -->
 <div id="info" style="margin-top:12px;font-size:12px;color:var(--color-text-secondary);text-align:center;"></div>
 </div>
 
 <script>
+// ============================================================
+// 종류별 한 줄 설명 (UI 의 typeDesc 영역에 표시)
+// ============================================================
 const descs = {
   white: '모든 주파수에 균등한 에너지. +0 dB/octave.',
   pink: '1/f 스펙트럼. 옥타브당 -3 dB. 자연음과 유사.',
@@ -73,13 +106,16 @@ const descs = {
   violet: '옥타브당 +6 dB. 매우 밝고 날카로운 노이즈.'
 };
 
-let currentType = 'white';
-let audioCtx = null;
-let source = null;
-let isPlaying = false;
+// ── 전역 상태 ────────────────────────────────────────────
+let currentType = 'white';   // 현재 선택된 노이즈 종류
+let audioCtx = null;         // 첫 재생 시점에 만든다
+let source = null;           // 현재 재생 중인 BufferSource
+let isPlaying = false;       // 재생 상태 플래그
 
+// ── 종류 선택 탭 동작 ─────────────────────────────────────
 document.querySelectorAll('.ntype').forEach(btn => {
   btn.addEventListener('click', () => {
+    // 다른 버튼들의 active 제거 후 클릭된 버튼만 활성화.
     document.querySelectorAll('.ntype').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentType = btn.dataset.t;
@@ -87,8 +123,10 @@ document.querySelectorAll('.ntype').forEach(btn => {
     drawPreview();
   });
 });
+// 페이지 진입 시 기본 설명(White) 표시.
 document.getElementById('typeDesc').textContent = descs['white'];
 
+// ── DOM 단축 참조 ────────────────────────────────────────
 const ampSlider = document.getElementById('amp');
 const durSlider = document.getElementById('dur');
 const srSelect = document.getElementById('sr');
@@ -99,11 +137,18 @@ const stopBtn = document.getElementById('stopBtn');
 const dlBtn = document.getElementById('dlBtn');
 const info = document.getElementById('info');
 
+// 랜덤 시드 버튼: 0 ~ 999999 사이의 정수로 갱신하고 프리뷰 재생성.
 document.getElementById('randSeed').addEventListener('click', () => {
   seedInput.value = Math.floor(Math.random() * 999999);
   drawPreview();
 });
 
+// ============================================================
+// mulberry32: 시드 기반의 작은 32-bit PRNG.
+//   같은 시드를 주면 항상 같은 시퀀스를 돌려준다 → 실험 재현성↑.
+//   Math.random 은 시드 지정이 불가능하므로 직접 구현.
+//   반환값: [0, 1) 사이의 부동소수점.
+// ============================================================
 function mulberry32(seed) {
   return function() {
     seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -113,11 +158,24 @@ function mulberry32(seed) {
   };
 }
 
+// ============================================================
+// generateNoise: 종류(type) 별로 numSamples 길이의 잡음을 생성.
+// 마지막에 진폭이 amp 가 되도록 피크 정규화한다.
+//
+// 종류별 알고리즘 요약:
+//   white  : 균일 분포 [-1,1].
+//   pink   : Paul Kellet 의 7-필터 근사 (1/f 스펙트럼).
+//   brown  : 이전 값에 작은 랜덤을 누적(적분) → 저주파 강조.
+//   blue   : 현재 - 이전 (1차 차분) → 고주파 강조.
+//   violet : 2차 차분 → 더 가파른 고주파 강조.
+// ============================================================
 function generateNoise(type, amp, numSamples, rng) {
   const out = new Float32Array(numSamples);
   if (type === 'white') {
+    // rng() 는 [0,1) 이므로 *2-1 로 [-1,1) 로 옮긴다.
     for (let i = 0; i < numSamples; i++) out[i] = (rng() * 2 - 1) * amp;
   } else if (type === 'pink') {
+    // Kellet 의 핑크 노이즈 근사 — 7개 IIR 필터의 누적합.
     let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
     for (let i = 0; i < numSamples; i++) {
       const w = rng() * 2 - 1;
@@ -128,13 +186,15 @@ function generateNoise(type, amp, numSamples, rng) {
       b6 = w * 0.115926;
     }
   } else if (type === 'brown') {
+    // 1차 IIR(누산기) — 미세한 표류(brownian motion) 와 비슷.
     let last = 0;
     for (let i = 0; i < numSamples; i++) {
       const w = rng() * 2 - 1;
-      last = (last + 0.02 * w) / 1.02;
+      last = (last + 0.02 * w) / 1.02;     // 살짝 새는 누적
       out[i] = last * amp * 3.5;
     }
   } else if (type === 'blue') {
+    // 1차 차분(고역통과) — 인접 샘플의 변화량만 살린다.
     let prev = 0;
     for (let i = 0; i < numSamples; i++) {
       const w = rng() * 2 - 1;
@@ -142,6 +202,7 @@ function generateNoise(type, amp, numSamples, rng) {
       prev = w;
     }
   } else if (type === 'violet') {
+    // 2차 차분(더 강한 고역통과).
     let prev = 0, pprev = 0;
     for (let i = 0; i < numSamples; i++) {
       const w = rng() * 2 - 1;
@@ -149,13 +210,19 @@ function generateNoise(type, amp, numSamples, rng) {
       pprev = prev; prev = w;
     }
   }
-  // normalize
+  // ── 피크 정규화 ──
+  // 종류별 필터를 거치면 진폭이 들쭉날쭉해지므로,
+  // 최대 절댓값이 amp 가 되도록 한 번 더 스케일링.
   let mx = 0;
   for (let i = 0; i < numSamples; i++) if (Math.abs(out[i]) > mx) mx = Math.abs(out[i]);
   if (mx > 0) for (let i = 0; i < numSamples; i++) out[i] = (out[i] / mx) * amp;
   return out;
 }
 
+// ============================================================
+// drawPreview: 짧은 샘플(2000개)을 생성해 캔버스에 미리 보여 줌.
+// 종류마다 색이 다르게(라이트/다크 모드도 다르게) 표시한다.
+// ============================================================
 function drawPreview() {
   const amp = parseFloat(ampSlider.value);
   const seed = parseInt(seedInput.value) || 42;
@@ -168,15 +235,18 @@ function drawPreview() {
   const h = preview.height = 80 * window.devicePixelRatio;
   ctx.clearRect(0, 0, w, h);
 
+  // 모드/종류별 색 결정.
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const colors = { white:'#888780', pink:'#D4537E', brown:'#D85A30', blue:'#378ADD', violet:'#7F77DD' };
   const darkColors = { white:'#B4B2A9', pink:'#ED93B1', brown:'#F0997B', blue:'#85B7EB', violet:'#AFA9EC' };
   const lineColor = isDark ? darkColors[currentType] : colors[currentType];
   const axisColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
 
+  // 가운데 가로 축.
   ctx.strokeStyle = axisColor; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
 
+  // 파형: 픽셀당 하나의 샘플만 골라서 빠르게 그림.
   ctx.strokeStyle = lineColor; ctx.lineWidth = 1.5;
   ctx.beginPath();
   for (let i = 0; i < w; i++) {
@@ -187,11 +257,16 @@ function drawPreview() {
   ctx.stroke();
 }
 
+// ============================================================
+// encodeWav: 16-bit PCM, mono WAV 로 인코딩.
+// (sine_wave_generator 의 그것과 사실상 동일한 헤더 작성 로직.)
+// ============================================================
 function encodeWav(samples, sr) {
   const n = samples.length;
   const buf = new ArrayBuffer(44 + n * 2);
   const v = new DataView(buf);
   const w4 = (o,s) => { for(let i=0;i<4;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  // RIFF / WAVE / fmt / data 청크 채우기.
   w4(0,'RIFF'); v.setUint32(4,36+n*2,true); w4(8,'WAVE');
   w4(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
   v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
@@ -203,6 +278,7 @@ function encodeWav(samples, sr) {
   return buf;
 }
 
+// ── 재생 정지 헬퍼 (재생 종료 콜백에서도 호출됨) ────────────
 function stopAudio() {
   if (source) { try { source.stop(); } catch(e) {} source = null; }
   isPlaying = false;
@@ -210,6 +286,7 @@ function stopAudio() {
   playBtn.textContent = '재생';
 }
 
+// ── 재생 버튼: 시드/설정 그대로 한 번 합성해 재생 ────────────
 playBtn.addEventListener('click', () => {
   if (isPlaying) return;
   const amp = parseFloat(ampSlider.value);
@@ -226,7 +303,7 @@ playBtn.addEventListener('click', () => {
   source = audioCtx.createBufferSource();
   source.buffer = abuf;
   source.connect(audioCtx.destination);
-  source.onended = stopAudio;
+  source.onended = stopAudio;        // 끝나면 UI 도 정리
   source.start();
   isPlaying = true;
   playBtn.disabled = true; stopBtn.disabled = false;
@@ -235,6 +312,7 @@ playBtn.addEventListener('click', () => {
 
 stopBtn.addEventListener('click', stopAudio);
 
+// ── 다운로드 버튼: 동일 설정으로 합성해 WAV 다운로드 트리거 ──
 dlBtn.addEventListener('click', () => {
   const amp = parseFloat(ampSlider.value);
   const dur = parseFloat(durSlider.value);
@@ -244,6 +322,7 @@ dlBtn.addEventListener('click', () => {
   const n = Math.floor(sr * dur);
   const samples = generateNoise(currentType, amp, n, rng);
   const wavBuf = encodeWav(samples, sr);
+  // Blob 으로 변환 후 <a download> 클릭으로 저장.
   const blob = new Blob([wavBuf], { type:'audio/wav' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -252,6 +331,7 @@ dlBtn.addEventListener('click', () => {
   info.textContent = `저장: ${currentType}_noise_${dur}s_seed${seed}.wav (${(wavBuf.byteLength/1024).toFixed(1)} KB)`;
 });
 
+// ── 슬라이더/입력 변경 이벤트 ─────────────────────────────
 ampSlider.addEventListener('input', () => {
   document.getElementById('ampVal').textContent = parseFloat(ampSlider.value).toFixed(2);
   drawPreview();
@@ -259,15 +339,18 @@ ampSlider.addEventListener('input', () => {
 durSlider.addEventListener('input', () => {
   document.getElementById('durVal').textContent = parseFloat(durSlider.value).toFixed(1);
 });
+// sr 이 바뀌면 AudioContext 도 다시 만들어야 한다.
 srSelect.addEventListener('change', () => { audioCtx = null; });
 seedInput.addEventListener('input', drawPreview);
 
+// 페이지 로드 시 초기 라벨/프리뷰 채우기.
 document.getElementById('ampVal').textContent = '0.50';
 document.getElementById('durVal').textContent = '3.0';
 drawPreview();
 </script>
 
 <style>
+/* 종류 선택 탭: hover/active 시 살짝 배경색이 들어오도록 */
 .ntype { transition: background 0.15s; }
 .ntype.active { background: var(--color-background-secondary); font-weight: 500; }
 </style>

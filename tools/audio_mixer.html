@@ -1,23 +1,44 @@
+<!--
+  ============================================================
+  tools/audio_mixer.html
+  ------------------------------------------------------------
+  두 개의 오디오 파일(A, B) 을 업로드받아
+    • 게인을 각각 조절하고
+    • 길이 처리(긴쪽/짧은쪽/루프) 와 정규화 방식을 선택해
+    • 하나의 mono WAV 로 합성·재생·다운로드
+  할 수 있게 해 주는 미니 도구.
+
+  실험 시나리오 예:
+    A = 깨끗한 음성, B = 잡음 → "오염된 신호" 만들기
+    A = 두 사인파 → 비트(맥놀이) 현상 확인 등.
+  ============================================================
+-->
 
 <h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">오디오 합성기 - 두 파일을 간섭하여 하나로 출력</h2>
 <div style="padding:1rem 0;">
 
+<!-- ── 파일 A / B 업로드 카드 두 개 ─────────────────────────── -->
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+  <!-- 파일 A 카드 -->
   <div id="card0" style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem;border:0.5px solid var(--color-border-tertiary);">
     <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파일 A</div>
+    <!-- 라벨 전체가 클릭 영역. 안쪽의 file input 은 시각적으로 숨겨 둔다. -->
     <label style="display:block;border:0.5px dashed var(--color-border-secondary);border-radius:var(--border-radius-md);padding:18px 8px;text-align:center;cursor:pointer;font-size:13px;color:var(--color-text-secondary);" id="lbl0">
       클릭하여 업로드
       <input type="file" id="file0" accept="audio/*" style="display:none;">
     </label>
     <div id="name0" style="font-size:12px;color:var(--color-text-secondary);margin-top:6px;min-height:16px;word-break:break-all;"></div>
+    <!-- 업로드된 파일의 파형 미리보기 -->
     <canvas id="wave0" style="width:100%;height:48px;display:block;margin-top:8px;"></canvas>
     <div style="margin-top:10px;">
+      <!-- 파일 A 의 게인(0~2). 1.0 = 원음 -->
       <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">게인 A</div>
       <input type="range" id="gain0" min="0" max="2" value="1" step="0.01" style="width:100%;">
       <div style="font-size:12px;text-align:right;color:var(--color-text-secondary);"><span id="gainVal0">1.00</span></div>
     </div>
   </div>
 
+  <!-- 파일 B 카드 (구조는 A 와 동일) -->
   <div id="card1" style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem;border:0.5px solid var(--color-border-tertiary);">
     <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">파일 B</div>
     <label style="display:block;border:0.5px dashed var(--color-border-secondary);border-radius:var(--border-radius-md);padding:18px 8px;text-align:center;cursor:pointer;font-size:13px;color:var(--color-text-secondary);" id="lbl1">
@@ -34,29 +55,33 @@
   </div>
 </div>
 
+<!-- ── 합성 옵션: 길이 / 정규화 / 출력 SR ────────────────────── -->
 <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem;margin-bottom:1.5rem;border:0.5px solid var(--color-border-tertiary);">
   <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:10px;">합성 옵션</div>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+    <!-- 길이 처리: 두 파일 길이가 다를 때 어떻게 맞출지 -->
     <div>
       <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">길이 처리</div>
       <select id="lenMode" style="width:100%;font-size:13px;">
-        <option value="longer">긴 쪽에 맞춤</option>
-        <option value="shorter">짧은 쪽에 맞춤</option>
-        <option value="loop">짧은 쪽 루프</option>
+        <option value="longer">긴 쪽에 맞춤</option>       <!-- 짧은 쪽은 그 뒤가 0(무음) -->
+        <option value="shorter">짧은 쪽에 맞춤</option>     <!-- 긴 쪽은 잘라 버림 -->
+        <option value="loop">짧은 쪽 루프</option>          <!-- 짧은 쪽을 반복 재생 -->
       </select>
     </div>
+    <!-- 정규화 모드: 합성 후 클리핑 방지 방법 -->
     <div>
       <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">출력 정규화</div>
       <select id="normMode" style="width:100%;font-size:13px;">
-        <option value="peak">피크 정규화</option>
-        <option value="none">정규화 없음</option>
-        <option value="clip">클리핑 (그대로)</option>
+        <option value="peak">피크 정규화</option>            <!-- 최대 |v|=1 로 스케일 -->
+        <option value="none">정규화 없음</option>            <!-- 원래대로 출력 -->
+        <option value="clip">클리핑 (그대로)</option>        <!-- [-1,1] 로 강제 자르기 -->
       </select>
     </div>
+    <!-- 출력 샘플레이트 -->
     <div>
       <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">출력 샘플레이트</div>
       <select id="outSr" style="width:100%;font-size:13px;">
-        <option value="auto">원본 유지</option>
+        <option value="auto">원본 유지</option>              <!-- A,B 중 큰 sr 채택 -->
         <option value="44100">44100 Hz</option>
         <option value="48000">48000 Hz</option>
         <option value="22050">22050 Hz</option>
@@ -65,12 +90,14 @@
   </div>
 </div>
 
+<!-- ── 합성 결과 파형 + 정보 ──────────────────────────────── -->
 <div style="background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;margin-bottom:1.5rem;">
   <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:6px;">합성 결과 파형</div>
   <canvas id="waveOut" style="width:100%;height:64px;display:block;"></canvas>
   <div id="outInfo" style="font-size:12px;color:var(--color-text-secondary);margin-top:6px;min-height:16px;"></div>
 </div>
 
+<!-- ── 제어 버튼 (합성/재생/정지/다운로드) ───────────────────── -->
 <div style="display:flex;gap:10px;">
   <button id="mixBtn" style="flex:1;padding:10px;font-size:14px;font-weight:500;" disabled>합성</button>
   <button id="playBtn" style="flex:1;padding:10px;font-size:14px;" disabled>재생</button>
@@ -81,6 +108,15 @@
 </div>
 
 <script>
+// ============================================================
+// 전역 상태
+//   audioCtx     : 페이지 로드 시 한 번만 만든다.
+//   buffers      : 두 개의 AudioBuffer(원본). [A, B] 순서.
+//   mixedSamples : 마지막으로 합성한 Float32 PCM (mono).
+//   mixedSr      : mixedSamples 의 샘플레이트.
+//   playSource   : 현재 재생 중인 BufferSource.
+//   isPlaying    : 재생 상태 플래그.
+// ============================================================
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 let buffers = [null, null];
 let mixedSamples = null;
@@ -88,9 +124,17 @@ let mixedSr = 44100;
 let playSource = null;
 let isPlaying = false;
 
+// ============================================================
+// drawWave: 캔버스에 mono Float32 파형을 그린다.
+//
+// 단순히 픽셀당 한 샘플만 찍지 않고, "픽셀 한 폭" 안에 들어가는
+// 모든 샘플의 min/max 를 세로선으로 잇는 방식(=peak/rms 미터의
+// peak 모드)으로 그려, 빠르면서도 잔향이 잘 보이게 한다.
+// ============================================================
 function drawWave(canvas, samples, color) {
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
+  // 캔버스 내부 해상도를 디스플레이 픽셀에 맞춘다.
   canvas.width = canvas.offsetWidth * dpr;
   canvas.height = canvas.offsetHeight * dpr;
   const w = canvas.width, h = canvas.height;
@@ -98,19 +142,23 @@ function drawWave(canvas, samples, color) {
   if (!samples || samples.length === 0) return;
 
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  // 다크 모드에서는 cc(=80%) 알파를 붙여 약간 부드럽게.
   ctx.strokeStyle = isDark ? (color + 'cc') : color;
   ctx.lineWidth = 1.2;
+  // 픽셀당 처리할 샘플 개수. 너무 작은 캔버스에서 0 되지 않도록 max(1,…).
   const step = Math.max(1, Math.floor(samples.length / w));
 
   ctx.beginPath();
   for (let i = 0; i < w; i++) {
     let mn = 0, mx = 0;
+    // 이 픽셀이 책임지는 샘플 구간의 시작 인덱스.
     const base = Math.floor(i / w * samples.length);
     for (let j = 0; j < step; j++) {
       const s = samples[base + j] || 0;
       if (s < mn) mn = s;
       if (s > mx) mx = s;
     }
+    // min/max 를 수직선으로 잇는다.
     const y1 = h/2 - mx * (h/2 - 2);
     const y2 = h/2 - mn * (h/2 - 2);
     if (i === 0) ctx.moveTo(i, h/2);
@@ -119,39 +167,51 @@ function drawWave(canvas, samples, color) {
   }
   ctx.stroke();
 
+  // 가운데 0-축을 옅게 한 줄 그어 준다.
   const axisColor = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
   ctx.strokeStyle = axisColor; ctx.lineWidth = 0.5;
   ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
 }
 
+// ============================================================
+// loadFile: 사용자가 고른 파일을 디코딩해 buffers[idx] 에 저장.
+// 파형을 그리고, 파일 정보(이름/길이/SR/채널수)도 표시.
+// 두 파일 모두 준비되면 "합성" 버튼을 활성화한다.
+// ============================================================
 async function loadFile(idx, file) {
   document.getElementById(`name${idx}`).textContent = file.name;
   document.getElementById(`lbl${idx}`).textContent = '불러오는 중...';
+  // ArrayBuffer 로 읽어 AudioContext 의 디코더로 넘긴다.
   const arrayBuf = await file.arrayBuffer();
   const decoded = await audioCtx.decodeAudioData(arrayBuf);
   buffers[idx] = decoded;
+  // 파일명이 길면 22자에서 자르고 "..." 을 붙인다.
   document.getElementById(`lbl${idx}`).textContent = `${file.name.slice(0, 22)}${file.name.length > 22 ? '...' : ''}`;
 
-  // mono mix for display
+  // 표시용 mono 다운믹스 (좌/우 평균).
   const ch0 = decoded.getChannelData(0);
   const ch1 = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : null;
   const disp = new Float32Array(ch0.length);
   for (let i = 0; i < ch0.length; i++) disp[i] = ch1 ? (ch0[i] + ch1[i]) / 2 : ch0[i];
 
+  // 파일 A 는 파란 계열, 파일 B 는 분홍 계열.
   const colors = ['#378ADD', '#D4537E'];
   drawWave(document.getElementById(`wave${idx}`), disp, colors[idx]);
 
+  // 정보 표시줄: 파일명 / 길이 / 샘플레이트 / 채널 수.
   const dur = decoded.duration.toFixed(2);
   const sr = decoded.sampleRate;
   document.getElementById(`name${idx}`).textContent = `${file.name} | ${dur}s | ${sr}Hz | ${decoded.numberOfChannels}ch`;
   checkReady();
 }
 
+// 두 파일이 모두 로드되어야 합성 버튼을 켠다.
 function checkReady() {
   const ready = buffers[0] && buffers[1];
   document.getElementById('mixBtn').disabled = !ready;
 }
 
+// ── 두 카드의 파일 입력 / 게인 슬라이더 이벤트 바인딩 ─────────
 [0, 1].forEach(idx => {
   document.getElementById(`file${idx}`).addEventListener('change', e => {
     if (e.target.files[0]) loadFile(idx, e.target.files[0]);
@@ -161,6 +221,14 @@ function checkReady() {
   });
 });
 
+// ============================================================
+// getMonoSamples: AudioBuffer 를 target SR 로 (필요시) 리샘플하고
+// mono Float32 배열로 돌려준다.
+//   • sr 이 이미 같으면 단순 다운믹스만 수행.
+//   • 다르면 선형 보간으로 빠르고 단순하게 리샘플.
+//     (품질에 민감한 작업이라면 sinc 보간이 더 적합하지만,
+//      간이 도구이므로 선형으로도 충분.)
+// ============================================================
 function getMonoSamples(buf, targetSr) {
   if (buf.sampleRate === targetSr) {
     const ch0 = buf.getChannelData(0);
@@ -169,7 +237,7 @@ function getMonoSamples(buf, targetSr) {
     for (let i = 0; i < ch0.length; i++) out[i] = ch1 ? (ch0[i]+ch1[i])/2 : ch0[i];
     return out;
   }
-  // linear resample
+  // 선형 리샘플링: pos = i * (src_sr / target_sr).
   const ratio = buf.sampleRate / targetSr;
   const srcLen = buf.getChannelData(0).length;
   const outLen = Math.floor(srcLen / ratio);
@@ -179,59 +247,76 @@ function getMonoSamples(buf, targetSr) {
   for (let i = 0; i < outLen; i++) {
     const pos = i * ratio;
     const lo = Math.floor(pos), hi = Math.min(lo+1, srcLen-1);
-    const frac = pos - lo;
+    const frac = pos - lo;                                    // 0..1
     const s0 = ch1 ? (ch0[lo]+ch1[lo])/2 : ch0[lo];
     const s1 = ch1 ? (ch0[hi]+ch1[hi])/2 : ch0[hi];
-    out[i] = s0 + (s1-s0)*frac;
+    out[i] = s0 + (s1-s0)*frac;                               // 선형 보간
   }
   return out;
 }
 
+// ============================================================
+// "합성" 버튼: 옵션대로 두 파일을 합치고 결과 파형/정보 갱신.
+// 결과는 mixedSamples 에 저장되어 재생/다운로드 가능 상태가 됨.
+// ============================================================
 document.getElementById('mixBtn').addEventListener('click', () => {
+  // 1) UI 값 읽기.
   const g0 = parseFloat(document.getElementById('gain0').value);
   const g1 = parseFloat(document.getElementById('gain1').value);
   const lenMode = document.getElementById('lenMode').value;
   const normMode = document.getElementById('normMode').value;
   const outSrSel = document.getElementById('outSr').value;
 
+  // 2) 출력 sr 결정.
   mixedSr = outSrSel === 'auto'
     ? Math.max(buffers[0].sampleRate, buffers[1].sampleRate)
     : parseInt(outSrSel);
 
+  // 3) 두 신호를 mixedSr 로 맞춰서 mono Float32 로 변환.
   let s0 = getMonoSamples(buffers[0], mixedSr);
   let s1 = getMonoSamples(buffers[1], mixedSr);
 
+  // 4) 출력 길이 결정.
   let len;
   if (lenMode === 'longer') len = Math.max(s0.length, s1.length);
   else if (lenMode === 'shorter') len = Math.min(s0.length, s1.length);
-  else len = Math.max(s0.length, s1.length); // loop
+  else len = Math.max(s0.length, s1.length); // loop 모드도 긴 쪽 기준
 
+  // 5) 샘플 단위로 합산.
   const mixed = new Float32Array(len);
   for (let i = 0; i < len; i++) {
     let a, b;
     if (lenMode === 'loop') {
+      // 짧은 신호는 % 연산으로 반복 재생.
       a = s0[i % s0.length] * g0;
       b = s1[i % s1.length] * g1;
     } else {
+      // longer/shorter 모드: 범위 밖은 0 으로 취급.
       a = (s0[i] || 0) * g0;
       b = (s1[i] || 0) * g1;
     }
     mixed[i] = a + b;
   }
 
+  // 6) 정규화.
   if (normMode === 'peak') {
+    // 피크 정규화: 최대 |v|=1 로 스케일.
     let mx = 0;
     for (let i = 0; i < len; i++) if (Math.abs(mixed[i]) > mx) mx = Math.abs(mixed[i]);
     if (mx > 0) for (let i = 0; i < len; i++) mixed[i] /= mx;
   } else if (normMode === 'clip') {
+    // 클리핑: [-1, 1] 범위를 넘는 값은 자른다.
     for (let i = 0; i < len; i++) mixed[i] = Math.max(-1, Math.min(1, mixed[i]));
   }
+  // normMode === 'none' 이면 그대로 둔다(스피커에선 자동 클리핑됨).
 
   mixedSamples = mixed;
 
+  // 7) 결과 파형 그리기 + 정보 출력.
   drawWave(document.getElementById('waveOut'), mixed, '#1D9E75');
 
   const dur = (len / mixedSr).toFixed(2);
+  // 피크 레벨을 dBFS 로 환산해 표시. log10(0) 방지를 위해 1e-10 더함.
   let peakDb = -Infinity;
   for (let i = 0; i < len; i++) {
     const db = 20 * Math.log10(Math.abs(mixed[i]) + 1e-10);
@@ -240,11 +325,13 @@ document.getElementById('mixBtn').addEventListener('click', () => {
   document.getElementById('outInfo').textContent =
     `${dur}s | ${mixedSr} Hz | mono | 피크: ${peakDb.toFixed(1)} dBFS | ${len.toLocaleString()} 샘플`;
 
+  // 8) 재생/다운로드 버튼 활성화.
   document.getElementById('playBtn').disabled = false;
   document.getElementById('dlBtn').disabled = false;
   document.getElementById('statusMsg').textContent = '합성 완료';
 });
 
+// ── 재생 정지 / 상태 정리 헬퍼 ────────────────────────────
 function stopAudio() {
   if (playSource) { try { playSource.stop(); } catch(e) {} playSource = null; }
   isPlaying = false;
@@ -253,6 +340,7 @@ function stopAudio() {
   document.getElementById('playBtn').textContent = '재생';
 }
 
+// 재생: mixedSamples 를 AudioBuffer 로 만들어 즉시 재생.
 document.getElementById('playBtn').addEventListener('click', () => {
   if (isPlaying || !mixedSamples) return;
   const abuf = audioCtx.createBuffer(1, mixedSamples.length, mixedSr);
@@ -270,12 +358,14 @@ document.getElementById('playBtn').addEventListener('click', () => {
 
 document.getElementById('stopBtn').addEventListener('click', stopAudio);
 
+// 다운로드: mixedSamples 를 16-bit PCM WAV 로 인코딩 후 저장.
 document.getElementById('dlBtn').addEventListener('click', () => {
   if (!mixedSamples) return;
   const n = mixedSamples.length;
   const buf = new ArrayBuffer(44 + n * 2);
   const v = new DataView(buf);
   const w4 = (o,s) => { for(let i=0;i<4;i++) v.setUint8(o+i,s.charCodeAt(i)); };
+  // RIFF / WAVE / fmt / data 헤더 작성. (다른 도구들과 동일 구조)
   w4(0,'RIFF'); v.setUint32(4,36+n*2,true); w4(8,'WAVE');
   w4(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
   v.setUint32(24,mixedSr,true); v.setUint32(28,mixedSr*2,true);

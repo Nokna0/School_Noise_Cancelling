@@ -1,34 +1,71 @@
+<!--
+  ============================================================
+  tools/audio_editor.html
+  ------------------------------------------------------------
+  브라우저에서 동작하는 가벼운 mono 오디오 에디터.
+  Audacity 의 가장 기본 기능들 — 구간 선택 → 트림/삭제/무음/
+  반전/페이드/정규화/게인 — 을 한 화면에서 흉내 낼 수 있도록
+  만든 단일 HTML 파일이다.
+
+  주요 기능
+    • 드래그 앤 드롭 또는 클릭으로 파일 업로드
+    • 파형 표시 + 휠 줌(Ctrl/⌘ + 휠) / 스크롤
+    • 마우스 드래그로 구간 선택 (작게 드래그하면 커서 이동)
+    • 트림 / 삭제 / 무음 / 반전 / 페이드인·아웃 / 정규화 / 게인
+    • 실행 취소 / 다시 실행 (최대 30단계)
+    • 재생 / 정지 / 선택구간 재생
+    • 결과를 16-bit PCM WAV 로 다운로드
+
+  ⚠ 모든 처리가 mono(채널 다운믹스)이며, 인메모리 Float32 배열
+     하나로 신호를 관리한다.
+  ============================================================
+-->
 
 <h2 class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;">오디오 에디터</h2>
 <div style="padding:1rem 0;font-size:14px;">
 
+<!-- ── 드롭존: 클릭 또는 드래그&드롭으로 파일 업로드 ────────── -->
 <div id="dropZone" style="border:0.5px dashed var(--color-border-secondary);border-radius:var(--border-radius-lg);padding:28px;text-align:center;cursor:pointer;margin-bottom:1rem;color:var(--color-text-secondary);font-size:13px;">
   클릭 또는 드래그로 오디오 파일 업로드 (WAV, MP3, OGG 등)
+  <!-- 시각적으로 숨김. dropZone 클릭 시 이 input 의 click() 이 트리거됨. -->
   <input type="file" id="fileIn" accept="audio/*" style="display:none;">
 </div>
+<!-- 에러 메시지 출력 영역 (디코딩 실패 등) -->
 <div id="errMsg" style="display:none;color:var(--color-text-danger);font-size:12px;margin-bottom:8px;text-align:center;"></div>
 
+<!-- ── 에디터 본체 (파일 로드 전에는 숨김) ─────────────────── -->
 <div id="editor" style="display:none;">
 
+<!-- 파일명 + 정보(SR/길이/채널) 한 줄 -->
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
   <span id="fileName" style="font-size:12px;color:var(--color-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;"></span>
   <span id="fileInfo" style="font-size:12px;color:var(--color-text-secondary);white-space:nowrap;flex-shrink:0;"></span>
 </div>
 
+<!--
+  파형 캔버스 2겹 겹쳐 두기:
+    • waveCanvas : 실제 파형(min/max 선) 을 그리는 메인 캔버스.
+    • overCanvas : 선택 구간 박스와 재생 커서를 그리는 오버레이.
+  오버레이를 분리해 두면 매 프레임 파형을 다시 그리지 않고
+  커서만 다시 그릴 수 있어 부드럽다.
+-->
 <div style="position:relative;margin-bottom:2px;">
   <canvas id="waveCanvas" style="width:100%;height:110px;display:block;cursor:crosshair;border-radius:var(--border-radius-md);background:var(--color-background-secondary);"></canvas>
   <canvas id="overCanvas" style="position:absolute;top:0;left:0;width:100%;height:110px;pointer-events:none;border-radius:var(--border-radius-md);"></canvas>
 </div>
+<!-- 시간축 자(눈금) 영역 -->
 <div id="ruler" style="position:relative;height:18px;margin-bottom:8px;user-select:none;font-size:10px;"></div>
 
+<!-- ── 재생 컨트롤 + 위치 표시 + 실행취소/다시실행 ──────────── -->
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap;">
   <div style="display:flex;gap:6px;align-items:center;">
-    <button id="btnRew" style="padding:5px 10px;font-size:13px;">&#9664;&#9664;</button>
-    <button id="btnPlay" style="padding:5px 14px;font-size:13px;">&#9654;</button>
-    <button id="btnStop" style="padding:5px 10px;font-size:13px;">&#9632;</button>
-    <button id="btnPlaySel" style="padding:5px 10px;font-size:12px;">선택 재생</button>
+    <button id="btnRew" style="padding:5px 10px;font-size:13px;">&#9664;&#9664;</button>   <!-- 처음으로 -->
+    <button id="btnPlay" style="padding:5px 14px;font-size:13px;">&#9654;</button>          <!-- 재생/일시정지 -->
+    <button id="btnStop" style="padding:5px 10px;font-size:13px;">&#9632;</button>          <!-- 정지 -->
+    <button id="btnPlaySel" style="padding:5px 10px;font-size:12px;">선택 재생</button>      <!-- 선택구간만 재생 -->
   </div>
   <div style="font-size:12px;color:var(--color-text-secondary);font-variant-numeric:tabular-nums;">
+    <!-- 현재 재생 위치 / 전체 길이 / 선택 구간 -->
     <span id="posDisplay">0.000</span> / <span id="durDisplay">0.000</span>s
     &nbsp;|&nbsp; 선택: <span id="selDisplay">없음</span>
   </div>
@@ -38,6 +75,8 @@
   </div>
 </div>
 
+<!-- ── 편집 작업 버튼들 (4×2 그리드) ─────────────────────── -->
+<!-- data-op 속성으로 어떤 동작인지 식별 → 공통 핸들러가 분기 처리 -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px;">
   <button class="op" data-op="trim"      style="padding:8px 4px;font-size:12px;">✂ 트림</button>
   <button class="op" data-op="delete"    style="padding:8px 4px;font-size:12px;">✕ 삭제</button>
@@ -49,6 +88,7 @@
   <button class="op" data-op="gain"      style="padding:8px 4px;font-size:12px;">♪ 게인</button>
 </div>
 
+<!-- 게인 슬라이더 패널: "게인" 버튼을 누르면 토글된다. -->
 <div id="gainPanel" style="display:none;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:10px;margin-bottom:10px;">
   <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:6px;">게인 배율</div>
   <div style="display:flex;gap:8px;align-items:center;">
@@ -58,6 +98,7 @@
   </div>
 </div>
 
+<!-- ── 줌 / 스크롤 슬라이더 ────────────────────────────────── -->
 <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
   <span style="font-size:12px;color:var(--color-text-secondary);">줌:</span>
   <input type="range" id="zoomSlider" min="1" max="20" value="1" step="0.1" style="flex:1;">
@@ -66,6 +107,7 @@
   <input type="range" id="scrollSlider" min="0" max="100" value="0" step="0.1" style="flex:1;">
 </div>
 
+<!-- ── 하단 보조 버튼 (전체 선택 / 해제 / 새 파일 / 다운로드) ─── -->
 <div style="display:flex;gap:8px;margin-top:4px;">
   <button id="btnSelectAll" style="padding:6px 10px;font-size:12px;">전체 선택</button>
   <button id="btnClearSel"  style="padding:6px 10px;font-size:12px;">선택 해제</button>
@@ -73,11 +115,28 @@
   <div style="flex:1;"></div>
   <button id="dlBtn" style="padding:6px 14px;font-size:13px;font-weight:500;">WAV 다운로드</button>
 </div>
+<!-- 작업 결과 메시지 (트림 완료 등) -->
 <div id="statusBar" style="margin-top:8px;font-size:11px;color:var(--color-text-secondary);min-height:14px;text-align:center;"></div>
 </div>
 </div>
 
 <script>
+// ============================================================
+// 전역 상태
+//   audioCtx        : 사용자 액션 후 lazy 생성 (자동 재생 정책 회피)
+//   samples         : 현재 편집 중인 mono Float32 PCM
+//   sampleRate      : samples 의 SR
+//   origName        : 다운로드 시 사용할 파일명 베이스
+//   selStart/selEnd : 마우스 드래그로 정해진 선택 구간(샘플 인덱스).
+//                     반대 방향으로 드래그할 수도 있어 min/max 로 정리해 사용.
+//   playPos         : 다음 재생 시작 위치 (샘플 인덱스)
+//   playStartTime   : 재생을 시작한 AudioContext.currentTime (애니메이션용)
+//   playSource      : 현재 재생 중인 BufferSource
+//   playStartSample : 재생 시작 샘플 인덱스 (재생 위치 계산용)
+//   zoom            : 가로 확대 비율 (1 = 전체, 최대 20배)
+//   scrollOffset    : 전체 길이 대비 시작 위치(%) (0~100*(1-1/zoom))
+//   undoStack/redoStack : 편집 직전 samples 의 복사본을 스택에 넣어 둠.
+// ============================================================
 let audioCtx = null;
 let samples = null, sampleRate = 44100;
 let origName = 'output';
@@ -89,17 +148,21 @@ let undoStack = [], redoStack = [];
 let isDragging = false;
 let animFrame = null;
 
+// AudioContext 는 사용자 액션 이후에만 만들 수 있는 환경이 있으므로
+// 필요할 때 lazy 하게 만든다.
 function getAudioCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   return audioCtx;
 }
 
+// 캔버스/컨텍스트 단축 참조.
 const waveCanvas = document.getElementById('waveCanvas');
 const overCanvas = document.getElementById('overCanvas');
 const wCtx = waveCanvas.getContext('2d');
 const oCtx = overCanvas.getContext('2d');
 
 // ── File load ──────────────────────────────────────────────
+// 에러 메시지 표시/숨김 헬퍼.
 function showErr(msg) {
   const el = document.getElementById('errMsg');
   el.textContent = msg;
@@ -107,10 +170,17 @@ function showErr(msg) {
 }
 function hideErr() { document.getElementById('errMsg').style.display = 'none'; }
 
+// 드롭존 클릭 → 숨겨진 파일 입력의 click() 호출
 document.getElementById('dropZone').addEventListener('click', () => document.getElementById('fileIn').click());
+// 드래그 오버 시 기본 동작(브라우저가 파일 열기) 막기 — 그래야 drop 이 우리에게 들어옴.
 document.getElementById('dropZone').addEventListener('dragover', e => e.preventDefault());
+// 실제 드롭: 첫 파일을 loadFile 로 넘김.
 document.getElementById('dropZone').addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if(f) loadFile(f); });
 document.getElementById('fileIn').addEventListener('change', e => { if(e.target.files[0]) loadFile(e.target.files[0]); });
+
+// "새 파일" 버튼: 에디터를 닫고 드롭존을 다시 보여 줘 새로 시작.
+// (기존 file input 이 같은 파일을 다시 골라도 change 가 안 터지는 문제 회피용으로
+//  input 요소 자체를 새로 만들어 갈아 끼운다.)
 document.getElementById('btnNewFile').addEventListener('click', () => {
   stopPlayback();
   document.getElementById('editor').style.display = 'none';
@@ -123,6 +193,12 @@ document.getElementById('btnNewFile').addEventListener('click', () => {
   hideErr();
 });
 
+// ============================================================
+// loadFile: 선택된 파일을 ArrayBuffer 로 읽고 디코딩 → mono 다운믹스
+// → 에디터 UI 표시 + 상태 초기화 + 첫 파형 그리기.
+// 콜백 기반 decodeAudioData 를 쓰는 이유는 일부 모바일 사파리에서
+// Promise 버전이 안 도는 경우가 있어 호환성을 위해.
+// ============================================================
 function loadFile(file) {
   hideErr();
   document.getElementById('dropZone').textContent = '불러오는 중...';
@@ -136,34 +212,40 @@ function loadFile(file) {
   };
 
   reader.onload = function(ev) {
-    const arrayBuf = ev.target.result.slice(0); // copy
+    // 일부 브라우저가 같은 ArrayBuffer 를 두 번 디코딩하지 못하는 문제 회피용 복사.
+    const arrayBuf = ev.target.result.slice(0);
     ctx.decodeAudioData(
       arrayBuf,
-      function(decoded) {              // success
+      function(decoded) {              // ── 성공
         sampleRate = decoded.sampleRate;
+        // 확장자(.wav 등) 를 떼어 다운로드 파일명 베이스로 보관.
         origName = file.name.replace(/\.[^.]+$/, '');
 
+        // 좌우 평균으로 mono 다운믹스.
         const ch0 = decoded.getChannelData(0);
         const ch1 = decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : null;
         samples = new Float32Array(ch0.length);
         for (let i = 0; i < ch0.length; i++)
           samples[i] = ch1 ? (ch0[i] + ch1[i]) / 2 : ch0[i];
 
+        // 상태 초기화.
         selStart = null; selEnd = null;
         playPos = 0; zoom = 1; scrollOffset = 0;
         undoStack = []; redoStack = [];
         document.getElementById('zoomSlider').value = 1;
         document.getElementById('scrollSlider').value = 0;
 
+        // UI 전환.
         document.getElementById('dropZone').style.display = 'none';
         document.getElementById('editor').style.display = 'block';
         document.getElementById('fileName').textContent = file.name;
         updateInfo();
-        setTimeout(drawWave, 50);   // wait for layout
+        // display:block 직후엔 offsetWidth 가 0 일 수 있어 살짝 지연 후 그림.
+        setTimeout(drawWave, 50);
         updateUndoButtons();
         setStatus('파일 로드 완료');
       },
-      function(err) {                  // decode error
+      function(err) {                  // ── 디코딩 실패
         document.getElementById('dropZone').textContent = '클릭하여 다시 시도';
         showErr('오디오 디코딩 실패: ' + (err ? err.message || err : '지원하지 않는 포맷'));
       }
@@ -174,6 +256,7 @@ function loadFile(file) {
 }
 
 // ── Info ───────────────────────────────────────────────────
+// 파일 정보 라벨(SR / 길이) 갱신.
 function updateInfo() {
   const dur = (samples.length / sampleRate).toFixed(2);
   document.getElementById('fileInfo').textContent = `${sampleRate} Hz | ${dur}s | mono`;
@@ -181,22 +264,27 @@ function updateInfo() {
 }
 
 // ── Coordinate helpers ─────────────────────────────────────
+// 샘플 인덱스 ↔ 캔버스 픽셀 좌표 변환.
+// zoom 과 scrollOffset 을 함께 고려해 "현재 보이는 구간" 안에서 매핑한다.
 function sampleToX(si) {
   const total = samples.length;
-  const visStart = scrollOffset * total / 100;
-  const visLen = total / zoom;
+  const visStart = scrollOffset * total / 100;       // 보이는 구간의 시작 샘플
+  const visLen = total / zoom;                       // 보이는 구간의 길이
   return ((si - visStart) / visLen) * waveCanvas.width;
 }
 function xToSample(x) {
   const total = samples.length;
   const visStart = scrollOffset * total / 100;
   const visLen = total / zoom;
+  // 범위 밖으로 나가지 않도록 clamp.
   return Math.max(0, Math.min(total, Math.round(visStart + (x / waveCanvas.width) * visLen)));
 }
 
 // ── Draw ───────────────────────────────────────────────────
+// 메인 파형을 다시 그린다. 픽셀당 min/max 를 세로선으로 잇는 방식.
 function drawWave() {
   if (!samples) return;
+  // 캔버스 내부 해상도를 디스플레이 픽셀에 맞춘다.
   const dpr = window.devicePixelRatio || 1;
   waveCanvas.width  = waveCanvas.offsetWidth  * dpr;
   waveCanvas.height = waveCanvas.offsetHeight * dpr;
@@ -206,6 +294,7 @@ function drawWave() {
 
   wCtx.clearRect(0, 0, w, h);
 
+  // 다크/라이트에 맞춘 파형 색.
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const waveCol = isDark ? '#AFA9EC' : '#534AB7';
 
@@ -215,6 +304,7 @@ function drawWave() {
 
   wCtx.strokeStyle = waveCol;
   wCtx.lineWidth = 1;
+  // 픽셀마다 담당하는 [sI, sJ) 구간의 min/max 를 구해 세로선으로 그린다.
   for (let px = 0; px < w; px++) {
     const sI = visStart + Math.floor(px / w * visLen);
     const sJ = Math.min(total, visStart + Math.floor((px + 1) / w * visLen));
@@ -224,11 +314,13 @@ function drawWave() {
       if (samples[s] > mx) mx = samples[s];
     }
     wCtx.beginPath();
+    // +0.5 는 1px 선이 픽셀 경계가 아닌 가운데로 떨어지도록 하는 트릭.
     wCtx.moveTo(px + 0.5, h / 2 - mx * (h / 2 - 2));
     wCtx.lineTo(px + 0.5, h / 2 - mn * (h / 2 - 2));
     wCtx.stroke();
   }
 
+  // 0-축 한 줄 옅게.
   wCtx.strokeStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)';
   wCtx.lineWidth = 0.5;
   wCtx.beginPath(); wCtx.moveTo(0, h/2); wCtx.lineTo(w, h/2); wCtx.stroke();
@@ -237,23 +329,28 @@ function drawWave() {
   drawRuler();
 }
 
+// 선택 박스 + 재생 커서만 따로 그리는 함수. 자주 호출돼야 부드럽다.
 function drawOverlay() {
   if (!samples) return;
   const w = overCanvas.width, h = overCanvas.height;
   oCtx.clearRect(0, 0, w, h);
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
+  // 선택 박스: 1px 미만의 미세 드래그는 무시.
   if (selStart !== null && selEnd !== null && Math.abs(selEnd - selStart) > 1) {
     const x1 = sampleToX(Math.min(selStart, selEnd));
     const x2 = sampleToX(Math.max(selStart, selEnd));
+    // 채우기(반투명 녹색).
     oCtx.fillStyle = isDark ? 'rgba(29,158,117,0.22)' : 'rgba(29,158,117,0.18)';
     oCtx.fillRect(x1, 0, x2 - x1, h);
+    // 양 끝 세로선.
     oCtx.strokeStyle = isDark ? 'rgba(29,158,117,0.8)' : 'rgba(15,110,86,0.8)';
     oCtx.lineWidth = 1;
     oCtx.beginPath(); oCtx.moveTo(x1, 0); oCtx.lineTo(x1, h); oCtx.stroke();
     oCtx.beginPath(); oCtx.moveTo(x2, 0); oCtx.lineTo(x2, h); oCtx.stroke();
   }
 
+  // 재생 커서: 현재 playPos 위치에 노란/주황 세로선.
   const px = sampleToX(playPos);
   if (px >= 0 && px <= w) {
     oCtx.strokeStyle = isDark ? '#FAC775' : '#BA7517';
@@ -262,6 +359,10 @@ function drawOverlay() {
   }
 }
 
+// 시간축 자(눈금) 를 그리는 함수.
+//   • 현재 화면에 보이는 구간(visStart, visLen) 의 길이에 따라
+//     적절한 step(초) 을 자동으로 고른다.
+//   • 60초가 넘는 위치는 "분:초" 표기로 바꿔 가독성을 올린다.
 function drawRuler() {
   const ruler = document.getElementById('ruler');
   ruler.innerHTML = '';
@@ -271,6 +372,7 @@ function drawRuler() {
   const visLen = total / zoom;
   const dur = visLen / sampleRate;
   const w = waveCanvas.offsetWidth;
+  // 후보 step 들. 화면 한 칸당 60px 정도 간격이 되도록 고른다.
   const steps = [0.001,0.005,0.01,0.05,0.1,0.5,1,5,10,30,60,300];
   let step = steps[steps.length - 1];
   for (const s of steps) { if (dur / s < w / 60) { step = s; break; } }
@@ -289,11 +391,13 @@ function drawRuler() {
 }
 
 // ── Mouse interaction ──────────────────────────────────────
+// 클릭 위치의 캔버스 내부 x 좌표 (devicePixelRatio 반영).
 function canvasX(e) {
   const rect = waveCanvas.getBoundingClientRect();
   return (e.clientX - rect.left) * (window.devicePixelRatio || 1);
 }
 
+// 마우스 다운: 새 선택 구간 시작.
 waveCanvas.addEventListener('mousedown', e => {
   isDragging = true;
   const x = canvasX(e);
@@ -301,6 +405,8 @@ waveCanvas.addEventListener('mousedown', e => {
   selEnd = selStart;
   drawOverlay(); updateSelDisplay();
 });
+// 마우스 무브: 드래그 중이면 끝 점을 업데이트.
+// (window 에 붙여 캔버스를 벗어나도 이어 추적되게.)
 window.addEventListener('mousemove', e => {
   if (!isDragging || !samples) return;
   const rect = waveCanvas.getBoundingClientRect();
@@ -308,6 +414,8 @@ window.addEventListener('mousemove', e => {
   selEnd = xToSample(x);
   drawOverlay(); updateSelDisplay();
 });
+// 마우스 업: 드래그가 미세하면(8px 미만) 선택을 취소하고
+// 그 위치를 재생 커서로만 옮긴다 (= 클릭으로 인식).
 window.addEventListener('mouseup', e => {
   if (!isDragging) return;
   isDragging = false;
@@ -319,13 +427,16 @@ window.addEventListener('mouseup', e => {
   }
 });
 
+// 마우스 휠: Ctrl/⌘ 동시 → 줌, 아니면 가로 스크롤.
 waveCanvas.addEventListener('wheel', e => {
   e.preventDefault();
   if (e.ctrlKey || e.metaKey) {
+    // 휠 위로 = 확대, 아래로 = 축소. 1~20 범위.
     zoom = Math.max(1, Math.min(20, zoom * (e.deltaY < 0 ? 1.15 : 0.87)));
     document.getElementById('zoomSlider').value = zoom;
     document.getElementById('zoomVal').textContent = `x${zoom.toFixed(1)}`;
   } else {
+    // 스크롤 범위는 줌이 클수록 넓어진다. (전체 100% 중 일부만 보임)
     const maxScroll = 100 * (1 - 1 / zoom);
     scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset + e.deltaY * 0.05));
     document.getElementById('scrollSlider').value = scrollOffset;
@@ -333,6 +444,7 @@ waveCanvas.addEventListener('wheel', e => {
   drawWave();
 }, { passive: false });
 
+// 줌 / 스크롤 슬라이더와 휠 동작 동기화.
 document.getElementById('zoomSlider').addEventListener('input', function() {
   zoom = parseFloat(this.value);
   document.getElementById('zoomVal').textContent = `x${zoom.toFixed(1)}`;
@@ -343,6 +455,7 @@ document.getElementById('scrollSlider').addEventListener('input', function() {
   drawWave();
 });
 
+// 선택 구간 라벨 갱신(없음 / 0.xxx s - y.yyy s (총 z.zzz s)).
 function updateSelDisplay() {
   if (selStart === null || selEnd === null || Math.abs(selEnd - selStart) < 2) {
     document.getElementById('selDisplay').textContent = '없음';
@@ -355,6 +468,7 @@ function updateSelDisplay() {
 }
 
 // ── Playback ───────────────────────────────────────────────
+// 재생 중에는 requestAnimationFrame 으로 playPos 와 커서를 갱신.
 function animate() {
   if (!isPlaying) return;
   const elapsed = getAudioCtx().currentTime - playStartTime;
@@ -364,10 +478,11 @@ function animate() {
   animFrame = requestAnimationFrame(animate);
 }
 
+// [from, to) 구간을 새 BufferSource 로 만들어 재생 시작.
 function startPlayback(from, to) {
   stopPlayback();
   const ctx = getAudioCtx();
-  ctx.resume();
+  ctx.resume();                       // suspend 상태였다면 풀기.
   const n = to - from;
   if (n <= 0) return;
   const buf = ctx.createBuffer(1, n, sampleRate);
@@ -375,6 +490,7 @@ function startPlayback(from, to) {
   playSource = ctx.createBufferSource();
   playSource.buffer = buf;
   playSource.connect(ctx.destination);
+  // 자연 종료 시 정지 처리 (외부에서 stop 한 게 아닐 때만).
   playSource.onended = () => { if (isPlaying) stopPlayback(); };
   playStartSample = from;
   playStartTime = ctx.currentTime;
@@ -384,6 +500,7 @@ function startPlayback(from, to) {
   animFrame = requestAnimationFrame(animate);
 }
 
+// 재생 정지 + 애니메이션 프레임 취소 + 버튼 라벨 복귀.
 function stopPlayback() {
   if (playSource) { try { playSource.stop(); } catch(e) {} playSource = null; }
   isPlaying = false;
@@ -391,19 +508,23 @@ function stopPlayback() {
   document.getElementById('btnPlay').textContent = '▶';
 }
 
+// ▶ 버튼: 재생 중이면 멈추고, 아니면 현재 위치부터 끝까지 재생.
 document.getElementById('btnPlay').addEventListener('click', () => {
   if (!samples) return;
   if (isPlaying) { stopPlayback(); return; }
   startPlayback(playPos, samples.length);
 });
+// ■ 버튼: 정지 + 위치 0 으로.
 document.getElementById('btnStop').addEventListener('click', () => {
   stopPlayback(); playPos = 0; drawOverlay();
   document.getElementById('posDisplay').textContent = '0.000';
 });
+// ◀◀ 버튼: 위치만 0 으로.
 document.getElementById('btnRew').addEventListener('click', () => {
   stopPlayback(); playPos = 0; drawOverlay();
   document.getElementById('posDisplay').textContent = '0.000';
 });
+// "선택 재생": 선택된 구간만 재생.
 document.getElementById('btnPlaySel').addEventListener('click', () => {
   const sel = getSel(); if (!sel) { setStatus('선택 구간 없음'); return; }
   playPos = sel[0];
@@ -421,6 +542,8 @@ document.getElementById('btnClearSel').addEventListener('click', () => {
 });
 
 // ── Undo / Redo ────────────────────────────────────────────
+// 편집 직전의 samples 복사본을 undoStack 에 쌓는다(최대 30개).
+// 새 편집이 일어나면 redoStack 은 비운다.
 function pushUndo() {
   undoStack.push(samples.slice());
   if (undoStack.length > 30) undoStack.shift();
@@ -431,18 +554,21 @@ function updateUndoButtons() {
   document.getElementById('btnUndo').disabled = undoStack.length === 0;
   document.getElementById('btnRedo').disabled = redoStack.length === 0;
 }
+// 편집 직후 공통 후처리: 재생 정지, 위치 0, 선택 해제, UI 갱신.
 function postEdit() {
   stopPlayback(); playPos = 0;
   selStart = null; selEnd = null;
   updateInfo(); drawWave(); updateSelDisplay();
   document.getElementById('posDisplay').textContent = '0.000';
 }
+// 실행 취소: 현재 상태를 redo 로 보내고 undo 에서 하나 꺼냄.
 document.getElementById('btnUndo').addEventListener('click', () => {
   if (!undoStack.length) return;
   redoStack.push(samples.slice());
   samples = undoStack.pop();
   postEdit(); updateUndoButtons(); setStatus('실행 취소');
 });
+// 다시 실행: 반대 방향.
 document.getElementById('btnRedo').addEventListener('click', () => {
   if (!redoStack.length) return;
   undoStack.push(samples.slice());
@@ -451,11 +577,13 @@ document.getElementById('btnRedo').addEventListener('click', () => {
 });
 
 // ── Operations ─────────────────────────────────────────────
+// 정규화된 [start, end] 형태로 선택 구간을 돌려준다. 미선택이면 null.
 function getSel() {
   if (selStart === null || selEnd === null || Math.abs(selEnd - selStart) < 2) return null;
   return [Math.min(selStart, selEnd), Math.max(selStart, selEnd)];
 }
 
+// 작업 버튼 공통 핸들러. "게인" 만 별도(패널 토글).
 document.querySelectorAll('.op').forEach(btn => {
   btn.addEventListener('click', () => {
     const op = btn.dataset.op;
@@ -467,18 +595,31 @@ document.querySelectorAll('.op').forEach(btn => {
     runOp(op);
   });
 });
+// 게인 슬라이더 값 표시 동기화.
 document.getElementById('gainSlider').addEventListener('input', function() {
   document.getElementById('gainSliderVal').textContent = parseFloat(this.value).toFixed(2);
 });
+// 게인 "적용" 클릭 → 실제 runOp('gain') 수행 후 패널 닫기.
 document.getElementById('applyGain').addEventListener('click', () => {
   runOp('gain'); document.getElementById('gainPanel').style.display = 'none';
 });
 
+// ============================================================
+// runOp: 실제 편집 연산을 수행하는 디스패처.
+//
+//   normalize : 선택 없이도 전체에 대해 동작.
+//   그 외     : 반드시 선택 구간이 있어야 한다.
+//
+// 각 연산은 pushUndo() 로 직전 상태를 백업한 뒤
+// samples 를 직접 변형(또는 새 배열로 교체)하고
+// 마지막에 postEdit() 으로 UI/재생 상태를 정리한다.
+// ============================================================
 function runOp(op) {
   if (!samples) return;
 
   if (op === 'normalize') {
     pushUndo();
+    // 최대 |v| 가 1 이 되도록 전체 스케일.
     let mx = 0;
     for (let i = 0; i < samples.length; i++) if (Math.abs(samples[i]) > mx) mx = Math.abs(samples[i]);
     if (mx > 0) for (let i = 0; i < samples.length; i++) samples[i] /= mx;
@@ -491,29 +632,36 @@ function runOp(op) {
 
   pushUndo();
   if (op === 'trim') {
+    // 선택 구간만 남김.
     samples = samples.slice(a, b);
     setStatus(`트림: ${(a/sampleRate).toFixed(3)}s - ${(b/sampleRate).toFixed(3)}s`);
   } else if (op === 'delete') {
+    // 선택 구간을 잘라내고 앞/뒤를 이어 붙임.
     const n = new Float32Array(samples.length - (b - a));
     n.set(samples.subarray(0, a), 0);
     n.set(samples.subarray(b), a);
     samples = n;
     setStatus(`삭제: ${((b-a)/sampleRate).toFixed(3)}s 제거`);
   } else if (op === 'silence') {
+    // 선택 구간을 0 으로 채움.
     for (let i = a; i < b; i++) samples[i] = 0;
     setStatus('무음 처리 완료');
   } else if (op === 'reverse') {
+    // 선택 구간 안의 샘플 순서를 뒤집음.
     Array.prototype.reverse.call(samples.subarray(a, b));
     setStatus('반전 완료');
   } else if (op === 'fadein') {
+    // 0 → 1 의 선형 페이드 인.
     const len = b - a;
     for (let i = 0; i < len; i++) samples[a+i] *= i / len;
     setStatus('페이드 인 완료');
   } else if (op === 'fadeout') {
+    // 1 → 0 의 선형 페이드 아웃.
     const len = b - a;
     for (let i = 0; i < len; i++) samples[a+i] *= (len - i) / len;
     setStatus('페이드 아웃 완료');
   } else if (op === 'gain') {
+    // 선택 구간에 일정 배율을 곱하고 [-1,1] 로 클리핑.
     const g = parseFloat(document.getElementById('gainSlider').value);
     for (let i = a; i < b; i++) samples[i] = Math.max(-1, Math.min(1, samples[i] * g));
     setStatus(`게인 x${g.toFixed(2)} 적용`);
@@ -523,16 +671,21 @@ function runOp(op) {
 }
 
 // ── WAV export ─────────────────────────────────────────────
+// 현재 samples 를 16-bit PCM, mono WAV 로 인코딩해 다운로드.
+// (다른 도구들과 동일한 헤더 작성 로직)
 document.getElementById('dlBtn').addEventListener('click', () => {
   if (!samples) return;
   const n = samples.length;
   const buf = new ArrayBuffer(44 + n * 2);
   const v = new DataView(buf);
   const w4 = (o, s) => { for(let i=0;i<4;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  // RIFF
   w4(0,'RIFF'); v.setUint32(4,36+n*2,true); w4(8,'WAVE');
+  // fmt (PCM, mono, sr, 16-bit)
   w4(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
   v.setUint32(24,sampleRate,true); v.setUint32(28,sampleRate*2,true);
   v.setUint16(32,2,true); v.setUint16(34,16,true);
+  // data
   w4(36,'data'); v.setUint32(40,n*2,true);
   for (let i = 0; i < n; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
@@ -546,7 +699,9 @@ document.getElementById('dlBtn').addEventListener('click', () => {
   setStatus(`저장: ${origName}_edited.wav (${(buf.byteLength/1024).toFixed(1)} KB)`);
 });
 
+// 상태 메시지 표시 헬퍼.
 function setStatus(msg) { document.getElementById('statusBar').textContent = msg; }
 
+// 창 크기 변경 시 캔버스 크기도 다시 맞춰 파형을 다시 그린다.
 window.addEventListener('resize', () => { if (samples) drawWave(); });
 </script>
