@@ -1,82 +1,214 @@
 # ============================================================
 # audiosep/server.py
 #
-# 4-모듈 구조에서 Module 2 (AI 참조 신호 추출) 를 담당한다.
+# AudioSep + 예측 기반 ALE 하이브리드 파이프라인의 서버측.
 #
-# WebSocket 프로토콜:
+# 역할:
+#   클라이언트로부터 마이크 PCM 청크 d 를 받고,
+#   사용자가 지정한 텍스트 쿼리 (예: "vacuum cleaner") 에 해당하는
+#   소음 성분 x 를 AudioSep 으로 추출해서 돌려준다.
+#
+# 클라이언트는 받은 x 를 NLMS 의 참조 신호로 사용하고,
+# 필요에 따라 ALE(자기예측)와 캐스케이드로 더 깎아낸다.
+#
+# ── WebSocket 프로토콜 ──────────────────────────────────────
 #   클라이언트 → 서버
-#     • 바이너리 : float32 PCM 청크 d(n)
-#     • 텍스트   : JSON {"type":"query","text":"..."} 쿼리 업데이트
-#                  JSON {"type":"mu","value":0.05}    μ 정보 (로깅용)
+#     • 바이너리 : float32 PCM 청크 d (16 kHz mono)
+#     • 텍스트   : JSON {"type":"query","text":"..."}      쿼리 변경
+#                  JSON {"type":"mu","value":0.05}         μ 로깅용
+#                  JSON {"type":"mode","value":"cascade"}  모드 로깅용
 #
 #   서버 → 클라이언트
-#     • 바이너리 : float32 PCM 참조 신호 x(n) (d 와 동일 길이)
+#     • 바이너리 : float32 PCM 참조 신호 x (d 와 동일 길이, 16 kHz)
 #
-# fake_audiosep:
-#   실제 AudioSep 모델을 붙이기 전의 임시 구현.
-#   저역통과 필터(LPF)로 타겟 잡음 성분을 흉내낸다.
-#   query 파라미터를 받아 두어, 추후 모델 교체 시 인터페이스 유지.
+# ── 실시간 처리 트릭 ────────────────────────────────────────
+#   AudioSep 은 transformer 기반이라 64 ms (1024 샘플) 청크 하나만 줘선
+#   분리 품질이 형편없다. 따라서 서버에서 BUFFER_SEC 짜리 롤링 버퍼를
+#   유지하고, 매번 버퍼 전체를 AudioSep 에 넣어 마지막 청크 길이만큼만
+#   잘라 응답한다. 첫 몇 초는 워밍업으로 컨텍스트가 모자라 잡음이 클 수
+#   있지만 그 후엔 안정적이다.
+#
+# ── 환경변수 ─────────────────────────────────────────────────
+#   AUDIOSEP_PATH        : AudioSep 레포 클론 위치  (필수)
+#   AUDIOSEP_CHECKPOINT  : .ckpt 파일 경로          (필수)
+#   AUDIOSEP_CONFIG      : config yaml 경로         (선택)
+#   AUDIOSEP_DEVICE      : 'cuda' | 'cpu'           (자동 감지)
 # ============================================================
 
 import asyncio
 import json
-import websockets
+import os
+import sys
+
 import numpy as np
+import websockets
 
 
-# ============================================================
-# Module 2: 참조 신호 추출 (fake — 실제 AudioSep 교체 예정)
-# ============================================================
+# ── AudioSep 경로 셋업 ─────────────────────────────────────
 
-def fake_audiosep(audio: np.ndarray, query: str = "") -> np.ndarray:
+AUDIOSEP_PATH       = os.environ.get("AUDIOSEP_PATH", "../AudioSep")
+AUDIOSEP_CONFIG     = os.environ.get(
+    "AUDIOSEP_CONFIG",
+    os.path.join(AUDIOSEP_PATH, "config", "audiosep_base.yaml"),
+)
+AUDIOSEP_CHECKPOINT = os.environ.get(
+    "AUDIOSEP_CHECKPOINT",
+    os.path.join(AUDIOSEP_PATH, "checkpoint", "audiosep_base_4M_steps.ckpt"),
+)
+
+if os.path.isdir(AUDIOSEP_PATH):
+    sys.path.insert(0, AUDIOSEP_PATH)
+
+import torch                                        # noqa: E402
+import scipy.signal                                 # noqa: E402
+
+try:
+    from pipeline import build_audiosep             # noqa: E402  (AudioSep 레포 루트의 pipeline.py)
+except ImportError as ex:
+    print("[ERROR] AudioSep 을 import 하지 못했어.")
+    print(f"        AUDIOSEP_PATH={AUDIOSEP_PATH!r} 가 올바른지 확인해줘.")
+    print(f"        원본 에러: {ex}")
+    sys.exit(1)
+
+
+# ── 상수 ───────────────────────────────────────────────────
+
+SR_CLIENT   = 16_000     # 클라이언트 sample rate (Web Audio 설정과 일치)
+SR_AUDIOSEP = 32_000     # AudioSep 학습 시 sample rate
+BUFFER_SEC  = 2.0        # 롤링 버퍼 크기 (컨텍스트 길수록 분리 품질↑, 메모리↑)
+BUFFER_LEN  = int(BUFFER_SEC * SR_CLIENT)
+
+DEVICE = os.environ.get(
+    "AUDIOSEP_DEVICE",
+    "cuda" if torch.cuda.is_available() else "cpu",
+)
+
+
+# ── 모델 로딩 (서버 시작 시 1회) ───────────────────────────
+
+print(f"[INFO] AudioSep 로딩 중  device={DEVICE}")
+print(f"       config     = {AUDIOSEP_CONFIG}")
+print(f"       checkpoint = {AUDIOSEP_CHECKPOINT}")
+
+model = build_audiosep(
+    config_yaml     = AUDIOSEP_CONFIG,
+    checkpoint_path = AUDIOSEP_CHECKPOINT,
+    device          = DEVICE,
+)
+model.eval()
+print("[INFO] 모델 로딩 완료")
+
+
+# ── 텍스트 임베딩 캐시 ─────────────────────────────────────
+# CLAP 텍스트 인코더는 비싸므로 쿼리당 한 번만 계산하고 재사용.
+
+_text_embed_cache: dict[str, torch.Tensor] = {}
+
+def get_text_embedding(query: str) -> torch.Tensor:
+    if query in _text_embed_cache:
+        return _text_embed_cache[query]
+    with torch.no_grad():
+        emb = model.query_encoder.get_query_embed(
+            modality="text",
+            text=[query],
+            device=DEVICE,
+        )
+    _text_embed_cache[query] = emb
+    return emb
+
+
+# ── AudioSep 분리 함수 ─────────────────────────────────────
+
+def audiosep_separate(audio_16k: np.ndarray, query: str) -> np.ndarray:
     """
-    audio : float32 ndarray, 16 kHz mono PCM
-    query : 타겟 소음 설명 텍스트 (예: "vacuum cleaner")
-            지금은 사용하지 않지만 AudioSep 교체 시 그대로 전달한다.
-    반환  : 같은 길이의 float32 참조 신호 x(n)
+    audio_16k : float32 mono PCM @ 16 kHz
+    query     : 타겟 소음 텍스트
+    반환       : float32 mono PCM @ 16 kHz, 입력과 같은 길이
     """
-    fft    = np.fft.rfft(audio)
-    cutoff = 3000          # 이 빈 이상의 고주파 제거 (LPF 역할)
-    fft[cutoff:] = 0
-    x = np.fft.irfft(fft)
-    return x.astype(np.float32)
+    # ① 16k → 32k 업샘플 (AudioSep 네이티브 SR)
+    audio_32k = scipy.signal.resample_poly(audio_16k, up=2, down=1).astype(np.float32)
+
+    # ② [batch=1, channels=1, samples] 텐서로 변환
+    x = torch.from_numpy(audio_32k).to(DEVICE).reshape(1, 1, -1)
+
+    # ③ 추론
+    with torch.no_grad():
+        cond = get_text_embedding(query)
+        sep_32k = model.ss_model({
+            "mixture":   x,
+            "condition": cond,
+        })["waveform"].squeeze().cpu().numpy().astype(np.float32)
+
+    # ④ 32k → 16k 다운샘플
+    sep_16k = scipy.signal.resample_poly(sep_32k, up=1, down=2).astype(np.float32)
+
+    # ⑤ 길이 정확히 맞추기 (리샘플 시 ±1 샘플 차이 생길 수 있음)
+    if len(sep_16k) > len(audio_16k):
+        sep_16k = sep_16k[: len(audio_16k)]
+    elif len(sep_16k) < len(audio_16k):
+        sep_16k = np.pad(sep_16k, (0, len(audio_16k) - len(sep_16k)))
+
+    return sep_16k
 
 
 # ============================================================
-# WebSocket 핸들러 (클라이언트 1명마다 실행)
+# WebSocket 핸들러 (클라이언트 1명당 1 인스턴스)
 # ============================================================
 
 async def handler(websocket):
 
-    print("클라이언트 연결됨")
+    print("[INFO] 클라이언트 연결됨")
 
-    current_query = ""   # 타겟 소음 텍스트 (Module 2 에 전달)
-    current_mu    = 0.05 # 클라이언트 μ 로깅용
+    # 클라이언트별 상태
+    current_query = ""
+    current_mu    = 0.05
+    current_mode  = "cascade"
+    rolling_buf   = np.zeros(BUFFER_LEN, dtype=np.float32)
 
-    async for message in websocket:
+    try:
+        async for message in websocket:
 
-        if isinstance(message, str):
-            # ── 제어 메시지 (JSON) ──────────────────────────
-            try:
-                data = json.loads(message)
-                msg_type = data.get("type", "")
+            if isinstance(message, str):
+                # ── 제어 메시지 (JSON) ───────────────────────
+                try:
+                    data = json.loads(message)
+                    msg_type = data.get("type", "")
 
-                if msg_type == "query":
-                    current_query = data.get("text", "")
-                    print(f"  쿼리 업데이트 : {current_query!r}")
+                    if msg_type == "query":
+                        current_query = data.get("text", "")
+                        print(f"  쿼리 업데이트 : {current_query!r}")
 
-                elif msg_type == "mu":
-                    current_mu = float(data.get("value", 0.05))
-                    print(f"  μ 업데이트   : {current_mu:.4f}")
+                    elif msg_type == "mu":
+                        current_mu = float(data.get("value", 0.05))
+                        print(f"  μ 업데이트   : {current_mu:.4f}")
 
-            except (json.JSONDecodeError, ValueError):
-                pass
+                    elif msg_type == "mode":
+                        current_mode = str(data.get("value", "cascade"))
+                        print(f"  모드 업데이트 : {current_mode}")
 
-        else:
-            # ── 오디오 청크 (바이너리) ───────────────────────
-            audio = np.frombuffer(message, dtype=np.float32)
-            x     = fake_audiosep(audio, current_query)
-            await websocket.send(x.tobytes())
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            else:
+                # ── 오디오 청크 (바이너리) ───────────────────
+                chunk = np.frombuffer(message, dtype=np.float32)
+                n = len(chunk)
+
+                # 롤링 버퍼: 가장 오래된 n 샘플 버리고 뒤에 새 청크 붙임
+                rolling_buf = np.concatenate([rolling_buf[n:], chunk])
+
+                if not current_query:
+                    # 쿼리 없으면 0 으로 응답 (NLMS 가 학습 안 됨 → bypass 효과)
+                    x = np.zeros(n, dtype=np.float32)
+                else:
+                    # 전체 버퍼에 AudioSep 적용 → 마지막 n 샘플만 잘라서 반환
+                    sep_buf = audiosep_separate(rolling_buf, current_query)
+                    x = sep_buf[-n:].copy()
+
+                await websocket.send(x.tobytes())
+
+    except websockets.exceptions.ConnectionClosed:
+        print("[INFO] 클라이언트 연결 종료")
 
 
 # ============================================================
@@ -84,10 +216,10 @@ async def handler(websocket):
 # ============================================================
 
 async def main():
-
-    async with websockets.serve(handler, "0.0.0.0", 8765):
-        print("서버 실행 중  ws://localhost:8765")
+    async with websockets.serve(handler, "0.0.0.0", 8765, max_size=None):
+        print("[INFO] 서버 실행 중  ws://localhost:8765")
         await asyncio.Future()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

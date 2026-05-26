@@ -1,4 +1,18 @@
-websockets
-numpy
-soundfile
-torch
+# 이 프로젝트 자체 의존성
+websockets>=12.0
+numpy>=1.24
+scipy>=1.10
+
+# PyTorch (AudioSep 추론용)
+# CUDA 사용 시:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+# CPU 만 사용 시:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0
+torchaudio>=2.0
+
+# AudioSep 본체 의존성 (AudioSep 레포의 requirements.txt 에도 동일)
+# 별도 클론한 AudioSep 디렉터리에서 추가 설치 필요:
+#   git clone https://github.com/Audio-AGI/AudioSep.git
+#   pip install -r AudioSep/requirements.txt
+#   (checkpoint 다운로드: README 참고)

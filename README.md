@@ -1,116 +1,82 @@
-# Realtime AudioSep + NLMS 노이즈 캔슬러
+# AudioSep + ALE 하이브리드 소음 캔슬러
 3학년 1학기 과학과제연구 — 노이즈 캔슬링
 
-마이크로 들어오는 혼합 소리에서 **특정 소음만 골라 실시간으로 제거**하는 데모 프로젝트입니다.  
-브라우저(클라이언트) + Python WebSocket 서버(서버)의 두 파트가 협력하여 동작합니다.
+마이크로 들어오는 혼합 소리에서 **두 가지 보완적인 접근**으로 소음을 실시간 제거합니다.
+
+| 접근 | 원리 | 강점 | 약점 |
+|------|------|------|------|
+| **AudioSep** (Audio-AGI) | 텍스트 쿼리 → CLAP 임베딩 → 트랜스포머 분리기가 표적 음원만 추출 | 텍스트로 의미적 표적 지정 가능 (목소리, 청소기 등) | 모델·GPU·서버 필요, 컨텍스트 짧으면 품질 저하 |
+| **ALE** (Adaptive Line Enhancer) | 입력 자신의 Δ 지연 버전을 참조로 NLMS 자기예측 | 가볍고 로컬 (브라우저 100줄), 주기 소음에 강함 | 비주기 소음·음성에 무력, 텍스트 표적 불가 |
+
+**Cascade 모드** 가 기본값으로, 두 단계를 직렬 결합해 서로의 약점을 보완합니다.
 
 ---
 
 ## 작동 원리
 
-### 핵심 아이디어
-
-소음을 제거하려면 두 가지 신호가 필요합니다.
-
-| 신호 | 이름 | 설명 |
-|------|------|------|
-| **d(n)** | 혼합 신호 (Desired) | 마이크가 잡아낸 "음성 + 소음" |
-| **x(n)** | 참조 신호 (Reference) | AI가 d(n)에서 뽑아낸 "소음만" |
-
-NLMS 필터가 x(n)를 보면서 d(n) 속의 소음 성분을 학습·예측하고,  
-그 예측값을 빼면 **e(n) = 음성만 남은 깨끗한 신호**가 됩니다.
-
-### 신호 흐름
+### 신호 흐름 (Cascade 모드)
 
 ```
-마이크
-  │
-  ▼
-d(n) ──────────────────────────────────────► 딜레이 큐
-  │                                                │
-  │  (WebSocket 전송)                              │ (짝 맞추기 대기)
-  ▼                                                │
-[서버 / Module 2]                                  │
-  fake_audiosep(d, query)                          │
-  → 참조 신호 x(n) 생성                            │
-  │                                                │
-  └────────────────────────────────────────►  NLMS (Module 3)
-                                                   │
-                                       y(n) = w · x(n)   ← 예측 잡음
-                                       e(n) = d(n) - y(n) ← 깨끗한 신호
-                                       w 갱신 (학습)
-                                                   │
-                                    ┌──────────────┴──────────────┐
-                                    ▼                             ▼
-                               스피커 출력                   파형 시각화
-                           (끊김 없는 재생)           (흰색=d, 빨간색=e)
+마이크 d[n]
+   │
+   ├──────────────────────────────────────────────────────► 딜레이 큐
+   │  (WebSocket)                                                │
+   ▼                                                             │
+[Server / AudioSep]                                              │ (짝 맞추기 대기)
+   2초 롤링 버퍼 ─► AudioSep(d_buf, query) ─► x[n]                │
+                                                                 │
+                                                  ┌──────────────┘
+                                                  ▼
+                                     [Stage 1: NLMS(d, x)]
+                                       y₁ = w₁ · x  (AudioSep 추정 잡음)
+                                       e₁ = d - y₁
+                                                  │
+                                                  ▼
+                                     [Stage 2: ALE(e₁)]
+                                       y₂ = w₂ · e₁_delayed  (잔여 주기 성분)
+                                       e₂ = e₁ - y₂   ← 최종 출력
+                                                  │
+                                       ┌──────────┴──────────┐
+                                       ▼                     ▼
+                                  스피커 출력            파형 시각화
+                              (Solution A 버퍼링)   (d / y_total / e₂)
 ```
 
----
+### Stage 1: AudioSep + NLMS — 텍스트로 표적 지정
 
-## 4개 핵심 모듈
+서버는 클라이언트가 보낸 마이크 청크를 **2초 롤링 버퍼**에 누적한 뒤,
+사용자 텍스트 쿼리(예: `"vacuum cleaner"`, `"60Hz hum"`)와 함께 AudioSep 에 통과시켜
+표적 소음의 추정 파형 `x[n]` 을 돌려줍니다.
 
-### Module 1 — 오디오 수집 & 딜레이 (`captureAudio`)
+> 64ms 청크 단독으론 트랜스포머 분리 품질이 안 나와서 롤링 버퍼가 필수.
+> 응답으로는 가장 최근 64ms 만 잘라 반환 → 끊김 없이 이어붙임.
 
-마이크 입력을 **1024 샘플(≈ 64ms) 단위 청크**로 쪼갭니다.  
-각 청크는 두 갈래로 분배됩니다.
+클라이언트는 받은 `x` 를 **NLMS 적응 필터의 참조 신호** 로 써서 `d` 안의 표적 성분을 학습·차감합니다.
+AudioSep 결과가 정확하지 않더라도 NLMS 가 게인·위상 오차를 자동 보정합니다.
 
-- 한 갈래 → WebSocket으로 서버에 전송
-- 다른 갈래 → **딜레이 큐(Delay Queue)** 에 보관
+### Stage 2: ALE — 잔여 주기 성분 정리
 
-서버가 AI 연산을 마치고 x(n)을 돌려주기까지 시간이 걸리므로,  
-그동안 d(n)을 큐에 가둬 두어 나중에 정확한 짝을 맞춥니다.
-
-### Module 2 — AI 참조 신호 추출 (`server.py`)
-
-서버가 d(n) 청크와 사용자가 입력한 **텍스트 쿼리** ("vacuum cleaner" 등)를 받아  
-타겟 소음에 해당하는 참조 신호 x(n)을 만들어 돌려줍니다.
-
-현재는 **임시 구현(fake_audiosep)**으로, 단순 저역통과 필터(LPF)를 사용합니다.  
-추후 실제 [AudioSep](https://github.com/Audio-AGI/AudioSep) 모델로 교체 예정입니다.
+Stage 1 출력 `e₁` 에는 **AudioSep 이 못 잡은 주기 소음**(전원 hum, 형광등, 팬 등)이
+남아 있을 수 있습니다. ALE 가 자기예측으로 이걸 추가 제거합니다.
 
 ```
-WebSocket 프로토콜
-  클라이언트 → 서버
-    바이너리   : float32 PCM 청크 d(n)
-    텍스트 JSON: {"type":"query","text":"vacuum cleaner"}
-                 {"type":"mu","value":0.05}
-
-  서버 → 클라이언트
-    바이너리   : float32 PCM 참조 신호 x(n)
+x_ale[i] = e₁[n - Δ - i]            ← e₁ 자신의 지연 버전
+y₂[n]    = Σ w₂[i] · x_ale[i]       ← 예측된 주기 성분
+e₂[n]    = e₁[n] - y₂[n]            ← 최종 출력
 ```
 
-### Module 3 — 시간 동기화 & NLMS (`nlms`)
+**왜 잘 동작하는가**: 주기 소음은 자기상관이 길어 예측 가능, 음성은 짧아 예측 불가.
+따라서 ALE 는 자연스럽게 주기 성분만 골라 제거합니다.
 
-서버에서 x(n)이 도착하면 딜레이 큐에서 **짝이 맞는 d(n)** 을 꺼내  
-NLMS(Normalized Least Mean Square) 적응 필터를 실행합니다.
+### 3가지 동작 모드
 
-**NLMS 수식:**
+| 모드 | Stage 1 (AudioSep) | Stage 2 (ALE) | 용도 |
+|------|--------------------|---------------|------|
+| `audiosep` | ✅ | ❌ | 텍스트로 정확히 짚을 수 있는 소음 |
+| `ale` | ❌ (서버 안 씀) | ✅ | 주기 소음만, 서버 없이 동작 |
+| `cascade` (기본) | ✅ | ✅ | 가장 일반적, 두 약점 보완 |
 
-```
-y[n]    = Σ  w[i] · x[n-i]             ← 현재 필터가 예측한 잡음
-e[n]    = d[n] - y[n]                  ← 오차 = 깨끗한 신호
-norm    = ε + Σ x[n-i]²                ← 입력 에너지 (발산 방지)
-w[i]   += (μ / norm) · e[n] · x[n-i]  ← 가중치 갱신
-```
-
-- **μ (학습률)**: 클수록 빠르게 수렴하지만 불안정, 작으면 안정적이지만 느림 (기본값 0.05)
-- **필터 탭 수**: 128개 (FILTER_LENGTH)
-- 필터가 수렴할수록 e(n)의 진폭이 줄어드는 것이 정상 동작입니다
-
-### Module 4 — 제어 & 출력 (`index.html` + UI 코드)
-
-**오디오 출력 (Solution A — 버퍼링 재생)**  
-매 청크를 `_playbackTime` 클록에 예약(`src.start(startTime)`)하여  
-청크들이 정확히 이어지도록 보장합니다. 끊김이나 튐 현상이 없습니다.
-
-**파형 시각화**
-- 흰색 반투명선: 원본 신호 d(n) — 소리를 내면 항상 반응
-- 빨간색 선: 필터 출력 e(n) — 노이즈 제거가 잘 될수록 진폭이 줄어듦
-
-**UI 컨트롤**
-- 타겟 소음 텍스트 입력 → [적용] → 서버로 쿼리 전송
-- μ 슬라이더 → 실시간으로 학습률 변경 및 서버에 알림
+UI 라디오 버튼으로 실시간 전환.
 
 ---
 
@@ -120,70 +86,87 @@ w[i]   += (μ / norm) · e[n] · x[n-i]  ← 가중치 갱신
 School_Noise_Cancelling/
 │
 ├── audiosep/
-│   ├── server.py            # Module 2: WebSocket 서버 + fake_audiosep
+│   ├── server.py            # AudioSep 추론 서버 (WebSocket)
 │   ├── requirements.txt     # Python 의존성
 │   └── static/
-│       ├── index.html       # Module 4: UI 레이아웃
-│       ├── app.js           # Module 1, 3, 4: 클라이언트 로직
+│       ├── index.html       # UI 레이아웃
+│       ├── app.js           # WebSocket + NLMS + ALE + 모드 분기
 │       └── style.css        # 스타일
 │
-└── tools/                   # 별도 오디오 유틸리티 (믹서, 에디터 등)
+└── tools/                   # 별도 오디오 유틸리티 (믹서, 에디터, 사인파/잡음 생성기)
 ```
 
 ---
 
 ## 실행 방법
 
-### 1. 의존성 설치
+### 1. AudioSep 레포 클론 + 체크포인트 다운로드
 
 ```bash
+# 적당한 위치에 AudioSep 클론
+git clone https://github.com/Audio-AGI/AudioSep.git
+cd AudioSep
+pip install -r requirements.txt
+
+# 체크포인트 다운로드 (audiosep_base_4M_steps.ckpt)
+# → README 의 안내 따라 Zenodo / HuggingFace 등에서 받아 checkpoint/ 폴더에 둠
+```
+
+### 2. 본 프로젝트 의존성 설치
+
+```bash
+cd School_Noise_Cancelling
 pip install -r audiosep/requirements.txt
 ```
 
-### 2. 서버 실행
+PyTorch 는 GPU 유무에 따라 다른 휠을 받아야 함 — `requirements.txt` 주석 참고.
+
+### 3. 서버 실행
 
 ```bash
+# AudioSep 경로 환경변수 지정 (필수)
+$env:AUDIOSEP_PATH       = "C:\path\to\AudioSep"
+$env:AUDIOSEP_CHECKPOINT = "C:\path\to\AudioSep\checkpoint\audiosep_base_4M_steps.ckpt"
+
 python audiosep/server.py
-# 출력: 서버 실행 중  ws://localhost:8765
+# → [INFO] AudioSep 로딩 중  device=cuda
+# → [INFO] 모델 로딩 완료
+# → [INFO] 서버 실행 중  ws://localhost:8765
 ```
 
-### 3. 브라우저에서 열기
+> CPU 만 있어도 동작하지만 한 청크 처리에 수백 ms 걸려 끊김 심함. **GPU 권장.**
 
-`audiosep/static/index.html` 을 브라우저로 열거나,  
-간단한 HTTP 서버를 이용합니다.
+### 4. 클라이언트 (브라우저)
 
 ```bash
-# Python 내장 HTTP 서버 예시
+# 별도 터미널에서
 python -m http.server 8080 --directory audiosep/static
 # → http://localhost:8080 접속
 ```
 
-> 마이크 접근은 `localhost` 또는 `https://` 환경에서만 허용됩니다.
+마이크 접근은 `localhost` 또는 `https://` 환경에서만 허용됨.
 
-### 4. 사용
+### 5. 사용
 
-1. 페이지가 열리면 연결 상태가 **"서버 연결됨"** 으로 바뀝니다.
-2. 타겟 소음 이름을 입력하고 **[적용]** 을 클릭합니다 (예: `vacuum cleaner`).
-3. **[시작]** 버튼을 클릭하면 마이크 권한을 요청합니다.
-4. 소리를 내면 파형이 실시간으로 그려집니다.
-   - 흰색 선이 크게 움직이면 마이크가 소리를 잡고 있는 것
-   - 빨간선이 점점 작아지면 NLMS 필터가 해당 소음을 학습·제거하고 있는 것
-5. μ 슬라이더로 학습 속도를 조절할 수 있습니다.
+1. 페이지가 열리면 상태 표시가 **"서버 연결됨"** 으로 바뀐다.
+2. **모드** 선택 (기본 `Cascade`).
+3. **타겟 쿼리** 입력 후 **[적용]** (예: `vacuum cleaner`, `fan noise`, `60Hz hum`).
+4. **[시작]** 클릭 → 마이크 권한 허용 → 처리 시작.
+5. **[A/B 비교]** 버튼으로 원본 ↔ 필터 적용 토글하며 효과 청취 확인.
+6. μ / Δ / 출력 게인 슬라이더로 튜닝.
+
+> ⚠️ **헤드폰 권장**: 스피커로 들으면 출력 → 마이크 피드백이 ALE 를 발산시킬 수 있음.
 
 ---
 
-## 향후 개선 계획
+## 알고 있는 한계
 
-`server.py`의 `fake_audiosep` 함수를 실제 AudioSep 모델로 교체하면  
-텍스트 쿼리 기반의 정밀한 음원 분리가 가능해집니다.
-
-```python
-# 교체 예시 (인터페이스는 그대로 유지)
-def fake_audiosep(audio: np.ndarray, query: str = "") -> np.ndarray:
-    # TODO: AudioSep 모델 호출
-    # return audiosep_model.separate(audio, query)
-    ...
-```
+| 항목 | 원인 / 대응 |
+|------|-------------|
+| Cascade 모드 첫 1~2초 잡음 | 서버 롤링 버퍼가 0으로 시작 → 컨텍스트 모자람. 잠시 기다리면 안정화. |
+| CPU 추론 시 끊김 | AudioSep 이 무거움. GPU 사용 권장. 끊김 줄이려면 `BUFFER_SEC` 축소. |
+| 음성도 일부 제거됨 (ALE) | Δ 가 너무 작으면 음성의 단시간 자기상관까지 학습. Δ 50~200 사이 권장. |
+| 모드 전환 직후 1초 정도 거친 출력 | 가중치 리셋 후 재수렴 필요. μ 크게 잠깐 올렸다 내리면 빠름. |
 
 ---
 
@@ -192,6 +175,6 @@ def fake_audiosep(audio: np.ndarray, query: str = "") -> np.ndarray:
 | 파트 | 기술 |
 |------|------|
 | 클라이언트 | Web Audio API, WebSocket, Canvas 2D |
-| 서버 | Python, `websockets`, `numpy` |
-| 적응 필터 | NLMS (Normalized LMS) |
-| 음원 분리 (예정) | AudioSep (딥러닝 텍스트-쿼리 기반) |
+| 서버 | Python, `websockets`, `numpy`, `scipy`, `torch` |
+| AI 분리 | [AudioSep](https://github.com/Audio-AGI/AudioSep) (CLAP + ResUNet) |
+| 적응 필터 | NLMS (Normalized LMS) ×2 — AudioSep 참조용 + ALE 자기예측용 |
