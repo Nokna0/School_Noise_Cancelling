@@ -23,11 +23,13 @@ const muSlider     = document.getElementById("muSlider");
 const muLabel      = document.getElementById("muLabel");
 const statusEl     = document.getElementById("status");
 
-const canvas = document.getElementById("waveCanvas");
-const ctx    = canvas.getContext("2d");
+const inputCanvas  = document.getElementById("inputCanvas");
+const outputCanvas = document.getElementById("outputCanvas");
+const inputCtx     = inputCanvas.getContext("2d");
+const outputCtx    = outputCanvas.getContext("2d");
 
-canvas.width  = 900;
-canvas.height = 300;
+inputCanvas.width  = outputCanvas.width  = 900;
+inputCanvas.height = outputCanvas.height = 200;
 
 
 // ── Module 3: NLMS 설정 ────────────────────────────────────
@@ -227,40 +229,34 @@ function playAudio(signal) {
 // ============================================================
 // Module 4: 파형 시각화
 //
-//   d (흰색 반투명) – 원본 마이크 입력, 항상 일정 크기
-//   e (빨간색)      – NLMS 출력, 필터 수렴 시 줄어듦
+//   inputCanvas  (흰색) – 원본 마이크 입력 d, 항상 일정 크기
+//   outputCanvas (빨간색) – NLMS 출력 e, 필터 수렴 시 줄어듦
 // ============================================================
 
 function drawWave(d, e) {
+    plotSignal(inputCtx,  inputCanvas,  d, "white");
+    plotSignal(outputCtx, outputCanvas, e, "red");
+}
 
-    const half = canvas.height / 2;
+function plotSignal(context, cvs, signal, color) {
+
+    const half = cvs.height / 2;
     const amp  = half * 0.9;
+    const step = signal.length / cvs.width;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    context.clearRect(0, 0, cvs.width, cvs.height);
+    context.beginPath();
+    context.strokeStyle = color;
+    context.globalAlpha = 1.0;
 
-    function plotSignal(signal, color, alpha) {
-
-        const step = signal.length / canvas.width;
-
-        ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.globalAlpha = alpha;
-
-        for (let i = 0; i < canvas.width; i++) {
-            const v    = signal[Math.floor(i * step)];
-            const rawY = half + v * amp;
-            const y    = Math.max(0, Math.min(canvas.height, rawY));
-            if (i === 0) ctx.moveTo(i, y);
-            else         ctx.lineTo(i, y);
-        }
-
-        ctx.stroke();
+    for (let i = 0; i < cvs.width; i++) {
+        const v = signal[Math.floor(i * step)];
+        const y = Math.max(0, Math.min(cvs.height, half + v * amp));
+        if (i === 0) context.moveTo(i, y);
+        else         context.lineTo(i, y);
     }
 
-    plotSignal(d, "white", 0.75);   // 원본
-    plotSignal(e, "red",   1.0);    // 필터 출력
-
-    ctx.globalAlpha = 1.0;
+    context.stroke();
 }
 
 

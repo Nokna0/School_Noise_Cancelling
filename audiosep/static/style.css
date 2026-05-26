@@ -87,13 +87,30 @@ button:disabled {
     color:         #aaa;
 }
 
-/* ── 파형 캔버스 ─────────────────────────────────────────── */
+/* ── 파형 캔버스 컨테이너 ────────────────────────────────── */
+#canvas-container {
+    display:        flex;
+    flex-direction: column;
+    align-items:    center;
+    gap:            12px;
+}
+
+.canvas-block {
+    width: 900px;
+}
+
+.canvas-label {
+    margin:     0 0 4px 2px;
+    font-size:  0.8em;
+    color:      #aaa;
+    text-align: left;
+}
+
 canvas {
-    display:    block;
-    margin:     0 auto;
-    width:      900px;
-    height:     300px;
-    background: black;
-    border:     1px solid #444;
+    display:       block;
+    width:         900px;
+    height:        200px;
+    background:    black;
+    border:        1px solid #444;
     border-radius: 4px;
 }

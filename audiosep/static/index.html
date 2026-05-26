@@ -59,8 +59,20 @@
 
     </div>
 
-    <!-- Module 4: 파형 캔버스 (흰색=원본 d, 빨간색=필터 출력 e) -->
-    <canvas id="waveCanvas"></canvas>
+    <!-- Module 4: 파형 캔버스 — 입력/출력 분리 표시 -->
+    <div id="canvas-container">
+
+        <div class="canvas-block">
+            <p class="canvas-label">입력 신호 (마이크)</p>
+            <canvas id="inputCanvas"></canvas>
+        </div>
+
+        <div class="canvas-block">
+            <p class="canvas-label">출력 신호 (노이즈 제거 후)</p>
+            <canvas id="outputCanvas"></canvas>
+        </div>
+
+    </div>
 
     <script src="app.js"></script>
 
