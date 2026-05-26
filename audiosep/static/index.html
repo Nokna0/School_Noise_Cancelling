@@ -1,74 +1,67 @@
 <!DOCTYPE html>
 
 <!--
-  ============================================================
   audiosep/static/index.html
-  ------------------------------------------------------------
-  실시간 노이즈 캔슬링 데모용 페이지.
 
-  화면 구성:
-    • [시작] 버튼 1개
-        - 클릭하면 마이크 권한을 요청하고 WebSocket 으로
-          서버에 오디오를 흘려 보내기 시작한다.
-    • 캔버스 1개 (id="waveCanvas")
-        - 매 프레임 NLMS 적응 필터가 추정해 낸 "오차 신호 e"
-          (= 잡음이 제거된 신호) 의 파형을 그려 보여 준다.
-
-  실제 동작 코드는 app.js 에, 색상/배치는 style.css 에 있다.
-  ============================================================
+  4-모듈 구조:
+    Module 1 – 오디오 수집 & 딜레이  (app.js: captureAudio)
+    Module 2 – AI 참조 신호 추출     (server.py: fake_audiosep / AudioSep)
+    Module 3 – 시간 동기화 & NLMS   (app.js: nlms)
+    Module 4 – 제어 & 출력          (여기 HTML + app.js: playAudio, drawWave)
 -->
 
 <html lang="ko">
 
 <head>
-
-    <!-- 한글이 깨지지 않도록 UTF-8 로 명시. -->
     <meta charset="UTF-8">
-
-    <!-- 브라우저 탭에 표시될 제목. -->
-    <title>
-
-        Realtime AudioSep + NLMS
-
-    </title>
-
-    <!-- 동일 폴더의 외부 스타일시트 연결. -->
-    <link
-        rel="stylesheet"
-        href="style.css"
-    >
-
+    <title>Realtime AudioSep + NLMS</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <!-- 페이지 머리말. 화면 중앙에 큰 글씨로 표시된다. -->
-    <h1>
+    <h1>Realtime AudioSep + NLMS</h1>
 
-        Realtime AudioSep + NLMS
+    <!-- Module 4: 컨트롤 패널 -->
+    <div id="controls">
 
-    </h1>
+        <!-- 시작 버튼 -->
+        <button id="startBtn">시작</button>
 
-    <!--
-      "시작" 버튼.
-      자바스크립트(app.js) 에서 startBtn.onclick 에 핸들러를 붙여
-      클릭 시 마이크 캡쳐와 WebSocket 통신을 시작한다.
-      브라우저 정책상 마이크 접근은 반드시 사용자의
-      "명시적 동작(클릭)" 이 있어야 하므로 버튼이 꼭 필요하다.
-    -->
-    <button id="startBtn">
+        <!-- 연결 / 처리 상태 표시 -->
+        <span id="status" class="status-badge">대기 중</span>
 
-        시작
+        <!-- 타겟 소음 텍스트 쿼리 (Module 2 로 전송) -->
+        <div class="control-row">
+            <label for="queryInput">타겟 소음</label>
+            <input
+                type="text"
+                id="queryInput"
+                placeholder="예: vacuum cleaner"
+                value="vacuum cleaner"
+            >
+            <button id="sendQueryBtn" disabled>적용</button>
+        </div>
 
-    </button>
+        <!-- NLMS 학습률 μ 실시간 조절 (Module 3) -->
+        <div class="control-row">
+            <label for="muSlider">학습률 μ</label>
+            <input
+                type="range"
+                id="muSlider"
+                min="0.001"
+                max="0.5"
+                step="0.001"
+                value="0.05"
+            >
+            <span id="muLabel">0.050</span>
+        </div>
 
-    <!--
-      잡음 제거 결과 파형을 그릴 캔버스.
-      크기는 app.js 가 직접 width / height 를 지정해 준다.
-    -->
+    </div>
+
+    <!-- Module 4: 파형 캔버스 (흰색=원본 d, 빨간색=필터 출력 e) -->
     <canvas id="waveCanvas"></canvas>
 
-    <!-- 실제 동작 로직. <body> 끝에 두어 DOM 이 준비된 뒤 로드되게 한다. -->
     <script src="app.js"></script>
 
 </body>
