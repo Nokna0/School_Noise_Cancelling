@@ -1,20 +1,10 @@
 <!DOCTYPE html>
 
-<!--
-  audiosep/static/index.html
-
-  AudioSep + ALE 하이브리드 소음 제거 데모
-
-  동작 모드:
-    audiosep  – 서버 AudioSep 의 텍스트 쿼리 기반 추출 + NLMS 차감
-    ale       – 입력의 자기예측 (서버 안 씀, 주기 소음만)
-    cascade   – AudioSep → ALE 직렬 결합 (기본값)
--->
-
 <html lang="ko">
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>AudioSep + ALE 하이브리드 소음 제거</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -22,99 +12,26 @@
 <body>
 
     <h1>AudioSep + ALE 하이브리드 소음 제거</h1>
-    <p class="subtitle">
-        AudioSep 이 텍스트 쿼리로 표적 소음을 뽑고, ALE 가 주기성 잔여를 추가로 제거한다.
-        <br>(헤드폰 권장 — 스피커 사용 시 마이크 피드백 발생 가능)
-    </p>
 
     <div id="controls">
 
-        <!-- 시작 + A/B 비교 -->
         <div class="control-row">
             <button id="startBtn">시작</button>
-            <button id="bypassBtn" disabled>A/B 비교</button>
             <span id="status" class="status-badge">대기 중</span>
         </div>
 
-        <!-- 동작 모드 선택 -->
-        <div class="control-row mode-row">
-            <label>모드</label>
-            <div class="mode-options">
-                <label class="mode-opt">
-                    <input type="radio" name="mode" value="audiosep">
-                    <span>AudioSep 단독</span>
-                    <small>텍스트 쿼리로 표적 소음만</small>
-                </label>
-                <label class="mode-opt">
-                    <input type="radio" name="mode" value="ale">
-                    <span>ALE 단독</span>
-                    <small>주기 소음만 (서버 불필요)</small>
-                </label>
-                <label class="mode-opt">
-                    <input type="radio" name="mode" value="cascade" checked>
-                    <span>Cascade (기본)</span>
-                    <small>AudioSep → ALE 직렬</small>
-                </label>
-            </div>
-        </div>
-
-        <!-- AudioSep 텍스트 쿼리 (실제로 모델에 전달됨) -->
-        <div class="control-row">
-            <label for="queryInput">타겟 쿼리</label>
+        <div class="control-row query-row">
+            <label for="queryInput"></label>
             <input
                 type="text"
                 id="queryInput"
-                placeholder="예: vacuum cleaner"
-                value="vacuum cleaner"
+                placeholder="제거할 소음을 여기에 입력"
+                
             >
-            <button id="sendQueryBtn">적용</button>
-        </div>
-
-        <!-- NLMS 학습률 μ (AudioSep·ALE 공통) -->
-        <div class="control-row">
-            <label for="muSlider">학습률 μ</label>
-            <input
-                type="range"
-                id="muSlider"
-                min="0.001"
-                max="0.5"
-                step="0.001"
-                value="0.05"
-            >
-            <span id="muLabel">0.050</span>
-        </div>
-
-        <!-- ALE 예측 지연 Δ -->
-        <div class="control-row">
-            <label for="deltaSlider">예측 지연 Δ</label>
-            <input
-                type="range"
-                id="deltaSlider"
-                min="10"
-                max="500"
-                step="1"
-                value="50"
-            >
-            <span id="deltaLabel">50 (≈3.1ms)</span>
-        </div>
-
-        <!-- 출력 게인 -->
-        <div class="control-row">
-            <label for="gainSlider">출력 게인</label>
-            <input
-                type="range"
-                id="gainSlider"
-                min="0.5"
-                max="10"
-                step="0.1"
-                value="2"
-            >
-            <span id="gainLabel">2.0×</span>
         </div>
 
     </div>
 
-    <!-- 파형 캔버스 -->
     <div id="canvas-container">
 
         <div class="canvas-block">
@@ -123,7 +40,7 @@
         </div>
 
         <div class="canvas-block">
-            <p class="canvas-label">② 제거된 소음 y (= d − e)</p>
+            <p class="canvas-label">② 제거된 소음 y (= d - e)</p>
             <canvas id="noiseCanvas"></canvas>
         </div>
 

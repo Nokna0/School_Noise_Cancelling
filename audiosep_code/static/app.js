@@ -1,37 +1,15 @@
 // ============================================================
 // audiosep/static/app.js
 //
-// AudioSep + ALE 하이브리드 소음 제거 클라이언트
-//
-// ── 3가지 동작 모드 ─────────────────────────────────────────
-//   1. "audiosep" — 서버의 AudioSep 이 텍스트 쿼리로 추출한 참조 신호
-//                   x 를 NLMS 로 학습·차감. 텍스트 기반 표적 제거.
-//   2. "ale"      — 입력 자신의 Δ 지연 버전을 참조로 NLMS 가
-//                   자기예측. 주기적 소음만 제거. 서버 안 씀.
-//   3. "cascade"  — AudioSep 으로 표적 제거 후 ALE 로 잔여 주기 성분
-//                   추가 정리. 두 접근을 직렬 결합. (기본값)
-//
-// ── 비동기 처리 (Solution A 버퍼링 재생) ────────────────────
-//   AudioSep 모드들은 서버 왕복이 필요해서 onaudioprocess 콜백 안에서
-//   동기 출력 불가. 따라서 모든 모드에서 e 를 AudioBufferSource 로
-//   _playbackTime 클록에 예약해 끊김 없이 재생한다.
+// AudioSep + ALE 하이브리드 소음 제거 클라이언트 (cascade 고정)
 // ============================================================
 
 
 // ── UI 요소 ────────────────────────────────────────────────
 
-const startBtn    = document.getElementById("startBtn");
-const bypassBtn   = document.getElementById("bypassBtn");
-const queryInput  = document.getElementById("queryInput");
-const sendQueryBtn= document.getElementById("sendQueryBtn");
-const muSlider    = document.getElementById("muSlider");
-const muLabel     = document.getElementById("muLabel");
-const deltaSlider = document.getElementById("deltaSlider");
-const deltaLabel  = document.getElementById("deltaLabel");
-const gainSlider  = document.getElementById("gainSlider");
-const gainLabel   = document.getElementById("gainLabel");
-const modeRadios  = document.querySelectorAll('input[name="mode"]');
-const statusEl    = document.getElementById("status");
+const startBtn   = document.getElementById("startBtn");
+const queryInput = document.getElementById("queryInput");
+const statusEl   = document.getElementById("status");
 
 const inputCanvas  = document.getElementById("inputCanvas");
 const noiseCanvas  = document.getElementById("noiseCanvas");
@@ -40,48 +18,55 @@ const inputCtx     = inputCanvas.getContext("2d");
 const noiseCtx     = noiseCanvas.getContext("2d");
 const outputCtx    = outputCanvas.getContext("2d");
 
-inputCanvas.width  = noiseCanvas.width  = outputCanvas.width  = 900;
-inputCanvas.height = noiseCanvas.height = outputCanvas.height = 160;
+function resizeCanvases() {
+    [inputCanvas, noiseCanvas, outputCanvas].forEach(c => {
+        const w = c.offsetWidth;
+        const h = c.offsetHeight;
+        if (w > 0) c.width  = w;
+        if (h > 0) c.height = h;
+    });
+}
+resizeCanvases();
+requestAnimationFrame(resizeCanvases);
+window.addEventListener("resize", resizeCanvases);
 
 
 // ── 상수 ───────────────────────────────────────────────────
 
-const SAMPLE_RATE   = 16000;
-const CHUNK_SIZE    = 1024;
-const NLMS_TAPS     = 128;       // AudioSep 모드 NLMS 탭 수
-const ALE_TAPS      = 128;       // ALE 모드 NLMS 탭 수
-const HISTORY_SIZE  = 2048;      // ALE 순환 버퍼 (Δ_max + ALE_TAPS 커버)
+const SAMPLE_RATE  = 16000;
+const CHUNK_SIZE   = 1024;
+const NLMS_TAPS    = 128;
+const ALE_TAPS     = 128;
+const HISTORY_SIZE = 2048;
 
 
 // ── 상태 ───────────────────────────────────────────────────
 
-let mode    = "cascade";                              // 'audiosep' | 'ale' | 'cascade'
-let mu      = parseFloat(muSlider.value);
-let delta   = parseInt(deltaSlider.value, 10);
-let outGain = parseFloat(gainSlider.value);
-let bypass  = false;                                  // true: 원본 d 출력 (A/B 비교)
+const mode    = "cascade";
+const mu      = 0.05;
+const delta   = 50;
+const outGain = 2.0;
+const bypass  = false;
 
 // NLMS (AudioSep 참조용)
 let w_nlms    = new Float32Array(NLMS_TAPS);
 let xHistNlms = new Float32Array(NLMS_TAPS);
 
 // ALE (자기예측용)
-let w_ale     = new Float32Array(ALE_TAPS);
-let history   = new Float32Array(HISTORY_SIZE);
-let histIdx   = 0;
+let w_ale   = new Float32Array(ALE_TAPS);
+let history = new Float32Array(HISTORY_SIZE);
+let histIdx = 0;
 
-// 서버 응답 대기 맵 (AudioSep 모드): seq → 보낸 청크 d
-//   서버 recv 순번과 클라이언트 send 순번은 1:1 로 일치한다(WS 가 순서 보장).
-//   서버가 따라가지 못해 건너뛴(=응답 없는) 오래된 seq 는 폐기해 지연 누적 방지.
+// 서버 응답 대기 맵: seq → 보낸 청크 d
 let sendSeq = 0;
-const pending = new Map();   // seq -> d
+const pending = new Map();
 
 
-// ── 오디오 노드 (GC 방지 모듈 스코프) ─────────────────────
+// ── 오디오 노드 ────────────────────────────────────────────
 
 let _audioContext = null;
 let _processor    = null;
-let _playbackTime = 0;            // Solution A: 스케줄 클록
+let _playbackTime = 0;
 
 
 // ── WebSocket ──────────────────────────────────────────────
@@ -98,11 +83,6 @@ function sendQuery() {
         socket.send(JSON.stringify({ type: "query", text: queryInput.value }));
     }
 }
-function sendMu() {
-    if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "mu", value: mu }));
-    }
-}
 function sendMode() {
     if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "mode", value: mode }));
@@ -110,55 +90,20 @@ function sendMode() {
 }
 
 
-// ── 라벨 갱신 ──────────────────────────────────────────────
+// ── 쿼리 입력 (Enter 로 적용) ─────────────────────────────
 
-function updateMuLabel()    { muLabel.textContent    = mu.toFixed(3); }
-function updateDeltaLabel() {
-    const ms = (delta / SAMPLE_RATE * 1000).toFixed(1);
-    deltaLabel.textContent = `${delta} (≈${ms}ms)`;
-}
-function updateGainLabel()  { gainLabel.textContent  = `${outGain.toFixed(1)}×`; }
-
-updateMuLabel(); updateDeltaLabel(); updateGainLabel();
-
-
-// ── 슬라이더 / 토글 이벤트 ────────────────────────────────
-
-muSlider.oninput    = () => { mu = parseFloat(muSlider.value); updateMuLabel(); sendMu(); };
-deltaSlider.oninput = () => { delta = parseInt(deltaSlider.value, 10); updateDeltaLabel(); w_ale.fill(0); };
-gainSlider.oninput  = () => { outGain = parseFloat(gainSlider.value); updateGainLabel(); };
-
-sendQueryBtn.onclick = () => { sendQuery(); setStatus(`쿼리: "${queryInput.value}"`); };
-
-modeRadios.forEach((r) => {
-    r.onchange = () => {
-        if (r.checked) {
-            mode = r.value;
-            // 모드 바뀌면 두 필터 모두 리셋 (학습된 가중치는 모드 의존적)
-            w_nlms.fill(0);  w_ale.fill(0);
-            // 대기 중이던 서버 응답은 새 모드와 무관 → 폐기(특히 ale 전환 시
-            // 뒤늦게 온 응답이 ale 재생과 섞여 순서가 꼬이는 것을 방지)
-            pending.clear();
-            sendMode();
-        }
-    };
+queryInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        sendQuery();
+        setStatus(`쿼리: "${queryInput.value}"`);
+    }
 });
-
-bypassBtn.onclick = () => {
-    bypass = !bypass;
-    bypassBtn.textContent = bypass
-        ? "B: 원본 듣는 중 (눌러서 필터로)"
-        : "A: 필터 적용 중 (눌러서 원본으로)";
-    bypassBtn.classList.toggle("bypass-on", bypass);
-};
 
 
 // ── 시작 ───────────────────────────────────────────────────
 
 startBtn.onclick = async () => {
 
-    // 브라우저 기본 마이크 처리(노이즈 서프레션 등)는 ALE 가 보는 신호를
-    // 미리 정리해 버려서 효과를 가릴 수 있다. 모두 끈다.
     const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
             echoCancellation: false,
@@ -179,17 +124,13 @@ startBtn.onclick = async () => {
     captureAudio();
     socket.onmessage = onServerReply;
 
-    startBtn.disabled  = true;
-    bypassBtn.disabled = false;
-    bypassBtn.textContent = "A: 필터 적용 중 (눌러서 원본으로)";
+    startBtn.disabled = true;
     setStatus(`녹음·필터링 중 (mode=${mode})`);
 };
 
 
 // ============================================================
-// 마이크 수집: 모든 모드에서 d 를 큐에 보관.
-//   - ale 모드: 큐에서 즉시 꺼내 처리 (서버 안 거침)
-//   - audiosep / cascade: 서버 응답 도착할 때 큐에서 꺼냄
+// 마이크 수집
 // ============================================================
 
 function captureAudio() {
@@ -197,26 +138,23 @@ function captureAudio() {
     _processor.onaudioprocess = (event) => {
 
         const input = event.inputBuffer.getChannelData(0);
-        const d     = new Float32Array(input);    // 복사본
+        const d     = new Float32Array(input);
 
         if (mode === "ale") {
-            // 서버 안 쓰는 모드: 즉시 처리·재생
             const { e, y } = ale(d);
             schedulePlay(bypass ? d : e);
             drawWave(d, y, e);
         } else {
-            // AudioSep 가 관여하는 모드: 서버에 보내고 응답 대기
+            plotSignal(inputCtx, inputCanvas, d, waveColors.input);
             if (socket.readyState === WebSocket.OPEN) {
                 const seq = ++sendSeq;
                 pending.set(seq, d);
                 socket.send(d.buffer);
             } else {
-                // 서버 끊겼을 때: 원본 그대로 흘려서 침묵 방지 (큐에 안 넣음)
                 schedulePlay(d);
             }
         }
 
-        // 출력 노드는 무음 (실제 재생은 schedulePlay 가 담당)
         const out = event.outputBuffer.getChannelData(0);
         out.fill(0);
     };
@@ -224,21 +162,18 @@ function captureAudio() {
 
 
 // ============================================================
-// 서버 응답: AudioSep 이 추출한 x 가 도착했을 때 호출됨.
-//   mode 에 따라 NLMS 만 / NLMS + ALE 캐스케이드 분기.
+// 서버 응답
 // ============================================================
 
 function onServerReply(msg) {
 
-    if (typeof msg.data === "string") return;   // 제어 메시지 무시
-    if (mode === "ale") return;                 // 서버 안 쓰는 모드: 늦게 온 응답 무시
+    if (typeof msg.data === "string") return;
+    if (mode === "ale") return;
 
-    // [uint32 seq(LE)] + float32 PCM
     const seq = new DataView(msg.data).getUint32(0, true);
     const x   = new Float32Array(msg.data, 4);
 
     const d = pending.get(seq);
-    // 이 응답보다 오래된 seq = 서버가 건너뛴 프레임 → 폐기(지연 누적 방지)
     for (const k of pending.keys()) {
         if (k <= seq) pending.delete(k);
     }
@@ -248,19 +183,13 @@ function onServerReply(msg) {
 
     if (mode === "audiosep") {
         ({ e, y } = nlms(d, x));
-    }
-    else if (mode === "cascade") {
-        // 1차: AudioSep 참조로 표적 소음 제거
+    } else if (mode === "cascade") {
         const stage1 = nlms(d, x);
-        // 2차: 1차 출력에 ALE 적용 → 잔여 주기 성분 추가 정리
         const stage2 = ale(stage1.e);
         e = stage2.e;
-        // 시각화용 y 는 "d 에서 실제로 빼진 총량" = d - e
         y = new Float32Array(d.length);
         for (let i = 0; i < d.length; i++) y[i] = d[i] - e[i];
-    }
-    else {
-        // 보호용: 알 수 없는 모드면 그냥 패스
+    } else {
         e = d;
         y = new Float32Array(d.length);
     }
@@ -271,7 +200,7 @@ function onServerReply(msg) {
 
 
 // ============================================================
-// NLMS: AudioSep 의 x 를 참조로 d 의 노이즈 성분 학습·차감
+// NLMS
 // ============================================================
 
 function nlms(d, x) {
@@ -281,7 +210,6 @@ function nlms(d, x) {
 
     for (let n = 0; n < d.length; n++) {
 
-        // x 이력 갱신 (최신 샘플이 인덱스 0)
         for (let i = NLMS_TAPS - 1; i > 0; i--) xHistNlms[i] = xHistNlms[i - 1];
         xHistNlms[0] = x[n];
 
@@ -306,8 +234,7 @@ function nlms(d, x) {
 
 
 // ============================================================
-// ALE: 입력 자신의 Δ 지연 버전을 참조로 자기예측
-//   y = 예측된 주기 성분, e = 예측 불가 성분 (음성)
+// ALE
 // ============================================================
 
 function ale(d) {
@@ -346,9 +273,7 @@ function ale(d) {
 
 
 // ============================================================
-// Solution A: 버퍼링 재생 (모든 모드에서 사용)
-//   매 청크를 _playbackTime 클록에 예약해 끊김 없이 이어붙임.
-//   currentTime 보다 뒤처지면 즉시 재생으로 리셋.
+// 버퍼링 재생
 // ============================================================
 
 function schedulePlay(signal) {
@@ -369,13 +294,19 @@ function schedulePlay(signal) {
 
 
 // ============================================================
-// 파형 시각화 — 모든 모드 공통
+// 파형 시각화
 // ============================================================
 
+const waveColors = {
+    input:  getComputedStyle(document.documentElement).getPropertyValue("--wave-input").trim()  || "#ffffff",
+    noise:  getComputedStyle(document.documentElement).getPropertyValue("--wave-noise").trim()  || "#ff6666",
+    output: getComputedStyle(document.documentElement).getPropertyValue("--wave-output").trim() || "#66ff66",
+};
+
 function drawWave(d, y, e) {
-    plotSignal(inputCtx,  inputCanvas,  d, "white");
-    plotSignal(noiseCtx,  noiseCanvas,  y, "red");
-    plotSignal(outputCtx, outputCanvas, e, "lime");
+    plotSignal(inputCtx,  inputCanvas,  d, waveColors.input);
+    plotSignal(noiseCtx,  noiseCanvas,  y, waveColors.noise);
+    plotSignal(outputCtx, outputCanvas, e, waveColors.output);
 }
 
 function plotSignal(context, cvs, signal, color) {
@@ -387,9 +318,10 @@ function plotSignal(context, cvs, signal, color) {
     context.clearRect(0, 0, cvs.width, cvs.height);
     context.beginPath();
     context.strokeStyle = color;
+    context.lineWidth = 1.5;
 
     for (let i = 0; i < cvs.width; i++) {
-        const v = signal[Math.floor(i * step)];
+        const v    = signal[Math.floor(i * step)];
         const yPix = Math.max(0, Math.min(cvs.height, half + v * amp));
         if (i === 0) context.moveTo(i, yPix);
         else         context.lineTo(i, yPix);

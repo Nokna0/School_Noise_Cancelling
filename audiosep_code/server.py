@@ -70,6 +70,9 @@ AUDIOSEP_CHECKPOINT = os.environ.get(
 
 if os.path.isdir(AUDIOSEP_PATH):
     sys.path.insert(0, AUDIOSEP_PATH)
+    # CLAP 인코더가 'checkpoint/...' 를 CWD 기준 상대경로로 찾으므로
+    # AudioSep 레포 루트를 CWD 로 설정한다.
+    os.chdir(AUDIOSEP_PATH)
 
 import torch                                        # noqa: E402
 import scipy.signal                                 # noqa: E402
@@ -87,7 +90,7 @@ except ImportError as ex:
 
 SR_CLIENT   = 16_000     # 클라이언트 sample rate (Web Audio 설정과 일치)
 SR_AUDIOSEP = 32_000     # AudioSep 학습 시 sample rate
-BUFFER_SEC  = 2.0        # 롤링 버퍼 크기 (컨텍스트 길수록 분리 품질↑, 메모리↑)
+BUFFER_SEC  = 1.0        # 롤링 버퍼 크기 (컨텍스트 길수록 분리 품질↑, 메모리↑)
 BUFFER_LEN  = int(BUFFER_SEC * SR_CLIENT)
 
 DEVICE = os.environ.get(
@@ -108,6 +111,9 @@ model = build_audiosep(
     device          = DEVICE,
 )
 model.eval()
+if DEVICE == "cpu":
+    torch.set_num_threads(os.cpu_count() or 4)
+    print(f"[INFO] CPU 스레드 수: {torch.get_num_threads()}")
 print("[INFO] 모델 로딩 완료")
 
 
