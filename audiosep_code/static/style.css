@@ -1,0 +1,191 @@
+/* audiosep/static/style.css */
+
+body {
+    background:   #111;
+    color:        white;
+    text-align:   center;
+    font-family:  sans-serif;
+    padding-bottom: 40px;
+}
+
+/* ── 컨트롤 패널 ─────────────────────────────────────────── */
+#controls {
+    display:         inline-flex;
+    flex-direction:  column;
+    align-items:     center;
+    gap:             12px;
+    background:      #1e1e1e;
+    border:          1px solid #444;
+    border-radius:   10px;
+    padding:         20px 32px;
+    margin-bottom:   20px;
+}
+
+.control-row {
+    display:     flex;
+    align-items: center;
+    gap:         10px;
+}
+
+.control-row label {
+    width:      90px;
+    text-align: right;
+    font-size:  0.9em;
+    color:      #aaa;
+}
+
+#queryInput {
+    background:   #2a2a2a;
+    border:       1px solid #555;
+    border-radius: 4px;
+    color:        white;
+    padding:      4px 8px;
+    width:        200px;
+    font-size:    0.9em;
+}
+
+#muSlider,
+#deltaSlider,
+#gainSlider {
+    width: 160px;
+    accent-color: #e55;
+}
+
+#muLabel,
+#deltaLabel,
+#gainLabel {
+    width:       90px;
+    text-align:  left;
+    font-size:   0.9em;
+    color:       #e55;
+    font-family: monospace;
+}
+
+/* A/B 비교 토글 — 원본 듣는 중에는 색 변경으로 명확히 표시 */
+#bypassBtn.bypass-on {
+    background:   #5a3;
+    border-color: #7c5;
+}
+#bypassBtn.bypass-on:hover {
+    background: #6c4;
+}
+
+.hint {
+    font-size: 0.75em;
+    color:     #777;
+    font-style: italic;
+}
+
+.subtitle {
+    color:     #888;
+    font-size: 0.9em;
+    margin-top: -8px;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+/* ── 동작 모드 라디오 ─────────────────────────────────────── */
+.mode-row {
+    align-items: flex-start;
+}
+
+.mode-options {
+    display: flex;
+    gap:     8px;
+}
+
+.mode-opt {
+    display:        flex;
+    flex-direction: column;
+    align-items:    flex-start;
+    padding:        6px 10px;
+    border:         1px solid #444;
+    border-radius:  6px;
+    background:     #2a2a2a;
+    cursor:         pointer;
+    min-width:      120px;
+    transition:     border-color 0.15s, background 0.15s;
+}
+
+.mode-opt:hover {
+    border-color: #777;
+}
+
+.mode-opt:has(input:checked) {
+    border-color: #e55;
+    background:   #3a1a1a;
+}
+
+.mode-opt input {
+    margin-right: 6px;
+}
+
+.mode-opt span {
+    font-size: 0.9em;
+    color:     #ddd;
+}
+
+.mode-opt small {
+    color:     #888;
+    font-size: 0.7em;
+    margin-top: 2px;
+    margin-left: 18px;
+}
+
+/* ── 버튼 공통 ───────────────────────────────────────────── */
+button {
+    background:    #333;
+    border:        1px solid #666;
+    border-radius: 4px;
+    color:         white;
+    padding:       6px 16px;
+    cursor:        pointer;
+    font-size:     0.9em;
+}
+
+button:hover:not(:disabled) {
+    background: #555;
+}
+
+button:disabled {
+    opacity: 0.4;
+    cursor:  not-allowed;
+}
+
+/* ── 상태 뱃지 ───────────────────────────────────────────── */
+.status-badge {
+    font-size:     0.8em;
+    padding:       3px 10px;
+    border-radius: 12px;
+    background:    #2a2a2a;
+    border:        1px solid #444;
+    color:         #aaa;
+}
+
+/* ── 파형 캔버스 컨테이너 ────────────────────────────────── */
+#canvas-container {
+    display:        flex;
+    flex-direction: column;
+    align-items:    center;
+    gap:            12px;
+}
+
+.canvas-block {
+    width: 900px;
+}
+
+.canvas-label {
+    margin:     0 0 4px 2px;
+    font-size:  0.8em;
+    color:      #aaa;
+    text-align: left;
+}
+
+canvas {
+    display:       block;
+    width:         900px;
+    height:        160px;
+    background:    black;
+    border:        1px solid #444;
+    border-radius: 4px;
+}
