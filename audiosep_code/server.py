@@ -85,6 +85,28 @@ except ImportError as ex:
     print(f"        원본 에러: {ex}")
     sys.exit(1)
 
+# ONNX Runtime (DirectML 우선, 없으면 CPU)
+_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+ONNX_PATH   = os.path.join(_SERVER_DIR, "audiosep_ss.onnx")
+_ort_session = None
+
+def _load_ort():
+    global _ort_session
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        provider  = "DmlExecutionProvider" if "DmlExecutionProvider" in providers else "CPUExecutionProvider"
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = os.cpu_count() or 4
+        opts.intra_op_num_threads = os.cpu_count() or 4
+        _ort_session = ort.InferenceSession(ONNX_PATH, opts, providers=[provider, "CPUExecutionProvider"])
+        print(f"[INFO] ONNX Runtime 로드 완료  provider={provider}")
+    except Exception as e:
+        print(f"[INFO] ONNX Runtime 비활성화 ({e}), PyTorch 추론 사용")
+
+if os.path.exists(ONNX_PATH):
+    _load_ort()
+
 
 # ── 상수 ───────────────────────────────────────────────────
 
@@ -146,16 +168,20 @@ def audiosep_separate(audio_16k: np.ndarray, query: str) -> np.ndarray:
     # ① 16k → 32k 업샘플 (AudioSep 네이티브 SR)
     audio_32k = scipy.signal.resample_poly(audio_16k, up=2, down=1).astype(np.float32)
 
-    # ② [batch=1, channels=1, samples] 텐서로 변환
-    x = torch.from_numpy(audio_32k).to(DEVICE).reshape(1, 1, -1)
-
-    # ③ 추론
-    with torch.no_grad():
-        cond = get_text_embedding(query)
-        sep_32k = model.ss_model({
-            "mixture":   x,
-            "condition": cond,
-        })["waveform"].squeeze().cpu().numpy().astype(np.float32)
+    # ② 추론
+    cond = get_text_embedding(query)
+    if _ort_session is not None:
+        sep_32k = _ort_session.run(None, {
+            "mixture":   audio_32k.reshape(1, 1, -1),
+            "condition": cond.cpu().numpy(),
+        })[0].squeeze().astype(np.float32)
+    else:
+        x = torch.from_numpy(audio_32k).to(DEVICE).reshape(1, 1, -1)
+        with torch.no_grad():
+            sep_32k = model.ss_model({
+                "mixture":   x,
+                "condition": cond,
+            })["waveform"].squeeze().cpu().numpy().astype(np.float32)
 
     # ④ 32k → 16k 다운샘플
     sep_16k = scipy.signal.resample_poly(sep_32k, up=1, down=2).astype(np.float32)

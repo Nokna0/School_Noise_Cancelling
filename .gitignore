@@ -5,6 +5,7 @@
 *.bin
 *.safetensors
 *.onnx
+*.onnx.data
 checkpoint/
 
 # ── 대용량 데이터 / 임베딩 ───────────────────────────────
