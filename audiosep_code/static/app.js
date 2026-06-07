@@ -70,8 +70,11 @@ let w_ale     = new Float32Array(ALE_TAPS);
 let history   = new Float32Array(HISTORY_SIZE);
 let histIdx   = 0;
 
-// 서버 응답 대기 큐 (AudioSep 모드)
-let delayQueue = [];
+// 서버 응답 대기 맵 (AudioSep 모드): seq → 보낸 청크 d
+//   서버 recv 순번과 클라이언트 send 순번은 1:1 로 일치한다(WS 가 순서 보장).
+//   서버가 따라가지 못해 건너뛴(=응답 없는) 오래된 seq 는 폐기해 지연 누적 방지.
+let sendSeq = 0;
+const pending = new Map();   // seq -> d
 
 
 // ── 오디오 노드 (GC 방지 모듈 스코프) ─────────────────────
@@ -133,6 +136,9 @@ modeRadios.forEach((r) => {
             mode = r.value;
             // 모드 바뀌면 두 필터 모두 리셋 (학습된 가중치는 모드 의존적)
             w_nlms.fill(0);  w_ale.fill(0);
+            // 대기 중이던 서버 응답은 새 모드와 무관 → 폐기(특히 ale 전환 시
+            // 뒤늦게 온 응답이 ale 재생과 섞여 순서가 꼬이는 것을 방지)
+            pending.clear();
             sendMode();
         }
     };
@@ -200,13 +206,13 @@ function captureAudio() {
             drawWave(d, y, e);
         } else {
             // AudioSep 가 관여하는 모드: 서버에 보내고 응답 대기
-            delayQueue.push(d);
             if (socket.readyState === WebSocket.OPEN) {
+                const seq = ++sendSeq;
+                pending.set(seq, d);
                 socket.send(d.buffer);
             } else {
-                // 서버 끊겼을 때: 원본 그대로 흘려서 침묵 방지
+                // 서버 끊겼을 때: 원본 그대로 흘려서 침묵 방지 (큐에 안 넣음)
                 schedulePlay(d);
-                delayQueue.shift();
             }
         }
 
@@ -225,9 +231,17 @@ function captureAudio() {
 function onServerReply(msg) {
 
     if (typeof msg.data === "string") return;   // 제어 메시지 무시
+    if (mode === "ale") return;                 // 서버 안 쓰는 모드: 늦게 온 응답 무시
 
-    const x = new Float32Array(msg.data);
-    const d = delayQueue.shift();
+    // [uint32 seq(LE)] + float32 PCM
+    const seq = new DataView(msg.data).getUint32(0, true);
+    const x   = new Float32Array(msg.data, 4);
+
+    const d = pending.get(seq);
+    // 이 응답보다 오래된 seq = 서버가 건너뛴 프레임 → 폐기(지연 누적 방지)
+    for (const k of pending.keys()) {
+        if (k <= seq) pending.delete(k);
+    }
     if (!d) return;
 
     let e, y;

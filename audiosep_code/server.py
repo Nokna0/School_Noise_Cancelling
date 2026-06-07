@@ -19,7 +19,10 @@
 #                  JSON {"type":"mode","value":"cascade"}  모드 로깅용
 #
 #   서버 → 클라이언트
-#     • 바이너리 : float32 PCM 참조 신호 x (d 와 동일 길이, 16 kHz)
+#     • 바이너리 : [uint32 seq(LE)] + float32 PCM 참조 신호 x
+#                  seq 는 이 x 가 대응하는 청크의 수신 순번.
+#                  (서버가 따라가지 못해 건너뛴 청크는 응답이 오지 않으며,
+#                   클라이언트는 seq 로 정렬을 맞추고 오래된 청크는 버린다.)
 #
 # ── 실시간 처리 트릭 ────────────────────────────────────────
 #   AudioSep 은 transformer 기반이라 64 ms (1024 샘플) 청크 하나만 줘선
@@ -27,6 +30,15 @@
 #   유지하고, 매번 버퍼 전체를 AudioSep 에 넣어 마지막 청크 길이만큼만
 #   잘라 응답한다. 첫 몇 초는 워밍업으로 컨텍스트가 모자라 잡음이 클 수
 #   있지만 그 후엔 안정적이다.
+#
+#   ── 백프레셔 (latest-wins) ──
+#   AudioSep 추론은 64 ms 보다 느릴 수 있다(특히 CPU). 매 청크마다
+#   추론을 직렬로 돌리면 백로그와 지연이 무한정 쌓인다. 그래서:
+#     • 추론은 run_in_executor 로 워커 스레드에서 돌려 이벤트 루프를
+#       막지 않는다(ping/pong 유지 → 연결 안 끊김).
+#     • 처리 슬롯은 "가장 최신 버퍼 하나"만 유지한다. 워커가 바쁜 동안
+#       들어온 청크들은 덮어써지고, 워커는 끝나면 항상 최신 것만 집어
+#       추론한다. 중간 청크들은 응답이 생략되어 지연이 항상 유한하다.
 #
 # ── 환경변수 ─────────────────────────────────────────────────
 #   AUDIOSEP_PATH        : AudioSep 레포 클론 위치  (필수)
@@ -159,11 +171,48 @@ async def handler(websocket):
 
     print("[INFO] 클라이언트 연결됨")
 
+    loop = asyncio.get_running_loop()
+
     # 클라이언트별 상태
     current_query = ""
-    current_mu    = 0.05
+    current_mu    = 0.05   # 로깅용 (실제 NLMS 적응은 클라이언트에서 수행)
     current_mode  = "cascade"
     rolling_buf   = np.zeros(BUFFER_LEN, dtype=np.float32)
+
+    # ── latest-wins 처리 슬롯 ──
+    #   pending 에는 "가장 최근 버퍼 한 개"만 들어간다. 워커가 추론하는
+    #   동안 새 청크가 오면 덮어쓰여, 워커는 항상 최신 것만 처리한다.
+    pending  = {"buf": None, "seq": 0, "n": 0}
+    has_work = asyncio.Event()
+    recv_seq = 0
+
+    async def worker():
+        while True:
+            await has_work.wait()
+            has_work.clear()
+
+            buf = pending["buf"]
+            seq = pending["seq"]
+            n   = pending["n"]
+            if buf is None:
+                continue
+
+            if not current_query:
+                # 쿼리 없으면 0 으로 응답 (NLMS 학습 안 됨 → bypass 효과)
+                x = np.zeros(n, dtype=np.float32)
+            else:
+                # 추론은 워커 스레드에서 → 이벤트 루프 안 막힘
+                sep_buf = await loop.run_in_executor(
+                    None, audiosep_separate, buf, current_query)
+                x = sep_buf[-n:].copy()
+
+            header = int(seq).to_bytes(4, "little")   # uint32 LE
+            try:
+                await websocket.send(header + x.tobytes())
+            except websockets.exceptions.ConnectionClosed:
+                break
+
+    worker_task = asyncio.create_task(worker())
 
     try:
         async for message in websocket:
@@ -193,22 +242,23 @@ async def handler(websocket):
                 # ── 오디오 청크 (바이너리) ───────────────────
                 chunk = np.frombuffer(message, dtype=np.float32)
                 n = len(chunk)
+                recv_seq += 1
 
-                # 롤링 버퍼: 가장 오래된 n 샘플 버리고 뒤에 새 청크 붙임
+                # 롤링 버퍼: 가장 오래된 n 샘플 버리고 뒤에 새 청크 붙임.
+                # concat 은 새 배열을 만들므로, 워커가 들고 있는 이전 버퍼는
+                # 안전하게 보존된다(스레드 경합 없음).
                 rolling_buf = np.concatenate([rolling_buf[n:], chunk])
 
-                if not current_query:
-                    # 쿼리 없으면 0 으로 응답 (NLMS 가 학습 안 됨 → bypass 효과)
-                    x = np.zeros(n, dtype=np.float32)
-                else:
-                    # 전체 버퍼에 AudioSep 적용 → 마지막 n 샘플만 잘라서 반환
-                    sep_buf = audiosep_separate(rolling_buf, current_query)
-                    x = sep_buf[-n:].copy()
-
-                await websocket.send(x.tobytes())
+                # 최신 프레임으로 슬롯 갱신 후 워커 깨우기
+                pending["buf"] = rolling_buf
+                pending["seq"] = recv_seq
+                pending["n"]   = n
+                has_work.set()
 
     except websockets.exceptions.ConnectionClosed:
         print("[INFO] 클라이언트 연결 종료")
+    finally:
+        worker_task.cancel()
 
 
 # ============================================================
