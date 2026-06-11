@@ -42,10 +42,10 @@ const HISTORY_SIZE = 2048;
 
 // ── 상태 ───────────────────────────────────────────────────
 
-const mode    = "cascade";
-const mu      = 0.05;
+const mode    = "audiosep";
+const mu      = 0.01;
 const delta   = 50;
-const outGain = 2.0;
+const outGain = 1.0;
 const bypass  = false;
 
 // NLMS (AudioSep 참조용)
@@ -173,6 +173,11 @@ function onServerReply(msg) {
     const seq = new DataView(msg.data).getUint32(0, true);
     const x   = new Float32Array(msg.data, 4);
 
+    // 건너뛴 청크를 순서대로 원음으로 채워 갭 제거
+    for (const [k, rawD] of pending.entries()) {
+        if (k < seq) schedulePlay(rawD);
+    }
+
     const d = pending.get(seq);
     for (const k of pending.keys()) {
         if (k <= seq) pending.delete(k);
@@ -287,6 +292,8 @@ function schedulePlay(signal) {
     src.connect(_audioContext.destination);
 
     const now       = _audioContext.currentTime;
+    // _playbackTime이 200ms 이상 밀렸으면 리셋해서 버퍼 누적 방지
+    if (_playbackTime < now - 0.2) _playbackTime = now;
     const startTime = Math.max(now, _playbackTime);
     src.start(startTime);
     _playbackTime = startTime + buffer.duration;

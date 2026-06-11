@@ -234,9 +234,13 @@ async def handler(websocket):
                 x = np.zeros(n, dtype=np.float32)
             else:
                 # 추론은 워커 스레드에서 → 이벤트 루프 안 막힘
-                sep_buf = await loop.run_in_executor(
-                    None, audiosep_separate, buf, current_query)
-                x = sep_buf[-n:].copy()
+                try:
+                    sep_buf = await loop.run_in_executor(
+                        None, audiosep_separate, buf, current_query)
+                    x = sep_buf[-n:].copy()
+                except Exception as e:
+                    print(f"[ERROR] AudioSep 추론 실패: {e}")
+                    x = np.zeros(n, dtype=np.float32)
 
             header = int(seq).to_bytes(4, "little")   # uint32 LE
             try:
